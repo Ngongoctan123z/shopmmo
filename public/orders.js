@@ -1,11 +1,13 @@
 const root = document.querySelector('#orders');
 const show = (tag,text) => Object.assign(document.createElement(tag),{textContent:text??''});
 const currency = new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND'});
-const labels = {pending:'Chờ chuyển khoản',paid:'Đã thanh toán',ordering:'Đang giao tài khoản',delivered:'Đã giao tài khoản',
+const labels = {awaiting_payment:'Chờ mở thanh toán',pending:'Chờ chuyển khoản',paid:'Đã thanh toán',ordering:'Đang giao tài khoản',delivered:'Đã giao tài khoản',
   expired:'Đã hết thời hạn thanh toán',review:'Đang đối soát thủ công'};
 let saved = [];
 try { saved = JSON.parse(localStorage.getItem('shopmmo-orders')||'[]'); } catch {}
+let refreshTimer;
 async function render() {
+  clearTimeout(refreshTimer);
   if(!Array.isArray(saved) || !saved.length){ root.textContent='Chưa có đơn hàng trên trình duyệt này.'; return; }
   const results = await Promise.all(saved.map(async item=>{
     try {
@@ -14,10 +16,25 @@ async function render() {
       return await response.json();
     }catch{return {code:item.code,state:'unavailable'};}
   }));
-  root.replaceChildren(...results.map(order=>{
+  root.replaceChildren(...results.map((order,index)=>{
     const card=show('article');
     card.append(show('h2',order.name || 'Đơn '+order.code),
-      show('p',[('#'+order.code),labels[order.state]||'Chưa tải được trạng thái',order.amount&&currency.format(order.amount)].filter(Boolean).join(' · ')));
+      show('p',[('#'+order.code),labels[order.state]||'Chưa tải được trạng thái',Number.isFinite(order.amount) && (order.state==='awaiting_payment'?'Giá tham khảo ':'') + currency.format(order.amount)].filter(Boolean).join(' · ')));
+    if(order.state==='awaiting_payment'){
+      const message=show('p','Đơn đã lưu trên ShopMMO. Vui lòng chờ hướng dẫn thanh toán trên trang này.');
+      const check=show('button','Kiểm tra thanh toán');
+      check.type='button';
+      check.addEventListener('click',async()=>{
+        check.disabled=true;
+        try{
+          const response=await fetch('/api/order/payment',{method:'POST',headers:{Authorization:'Bearer '+saved[index].token}});
+          const result=await response.json();
+          if(!response.ok) throw Error(result.message);
+          await render();
+        }catch(error){message.textContent=error.message;check.disabled=false;}
+      });
+      card.append(message,check);
+    }
     if(order.payment){
       const payment=order.payment;
       const section=show('section');
@@ -35,7 +52,7 @@ async function render() {
     if(order.delivery) card.append(show('pre',order.delivery.join('\n')));
     return card;
   }));
-  if(results.some(item=>['pending','paid','ordering','unavailable'].includes(item.state))) setTimeout(render,6000);
+  if(results.some(item=>['pending','paid','ordering','unavailable'].includes(item.state))) refreshTimer=setTimeout(render,6000);
 }
 void render();
 

@@ -55,7 +55,7 @@ function render(){
   $('orders').replaceChildren(...state.orders.map(item=>{
     const row=node('tr');
     const ref=node('td',String(item.code));ref.append(node('small',item.name));
-    const detail=node('td',item.state);if(item.detail)detail.append(node('small',item.detail));
+    const detail=node('td',item.state==='awaiting_payment'?'Chờ mở thanh toán':item.state);if(item.detail)detail.append(node('small',item.detail));
     if(item.payment_ref)detail.append(node('small','GPM Pay · '+item.payment_ref));
     if(item.supplier_ref)detail.append(node('small',sourceName[item.source]+' · '+item.supplier_ref));
     if(item.supplier_cost!==null)detail.append(node('small','Giá vốn thực tế '+formatVnd(item.supplier_cost)));

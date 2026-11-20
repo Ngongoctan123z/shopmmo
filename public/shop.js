@@ -18,7 +18,7 @@ function render(){
     title.textContent = item.name;
     const state = document.createElement('span');
     state.className = 'stock';
-    state.textContent = 'Có ngay tại nguồn';
+    state.textContent = 'Có sẵn';
     const desc = document.createElement('p');
     desc.className = 'desc';
     desc.textContent = item.plan || item.brand;
@@ -27,33 +27,29 @@ function render(){
     const price = document.createElement('span');
     price.className = 'price';
     const amount = item.price ?? item.referencePrice;
-    price.textContent = amount === null ? 'Xem giá tại nguồn' : (item.price === null ? 'Tham khảo ' : '') + currency.format(amount);
-    const link = document.createElement('a');
-    link.className = 'primary';
-    link.textContent = 'Xem tại nguồn';
-    link.href = item.url;
-    if(item.buyable){
-      const buy=document.createElement('button');
-      buy.className='primary';
-      buy.textContent='Mua ngay';
-      buy.addEventListener('click', async()=>{
-        const status=document.querySelector('#purchase-status');
-        buy.disabled=true;
-        status.textContent='Đang tạo đơn thanh toán…';
-        try{
-          const response=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({source:item.source,id:item.id,price:item.price})});
-          const data=await response.json();
-          if(!response.ok) throw Error(data.message);
-          const saved=JSON.parse(localStorage.getItem('shopmmo-orders')||'[]');
-          localStorage.setItem('shopmmo-orders',JSON.stringify([{code:data.code,token:data.token},...saved].slice(0,30)));
-          window.location.assign('/orders');
-        }catch(error){ status.textContent=error.message; buy.disabled=false; }
-      });
-      bottom.append(price,buy);
-    }else{
-      bottom.append(price,link);
-    }
+    price.textContent = amount === null ? 'Chưa có giá' : (item.price === null ? 'Tham khảo ' : '') + currency.format(amount);
+    const buy=document.createElement('button');
+    buy.type='button';
+    buy.className='primary';
+    buy.textContent='Mua ngay';
+    buy.setAttribute('aria-label','Mua ngay '+item.name+(item.plan?' '+item.plan:''));
+    buy.disabled=amount===null;
+    buy.addEventListener('click',async()=>{
+      const status=document.querySelector('#purchase-status');
+      buy.disabled=true;
+      status.textContent='Đang tạo đơn ShopMMO…';
+      try{
+        const stored=JSON.parse(localStorage.getItem('shopmmo-orders')||'[]');
+        const saved=Array.isArray(stored)?stored:[];
+        const response=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({source:item.source,id:item.id,price:amount})});
+        const data=await response.json();
+        if(!response.ok) throw Error(data.message);
+        localStorage.setItem('shopmmo-orders',JSON.stringify([{code:data.code,token:data.token},...saved].slice(0,30)));
+        window.location.assign('/orders');
+      }catch(error){status.textContent=error.message;buy.disabled=false;}
+    });
+    bottom.append(price,buy);
     card.append(state,title,desc,bottom);
     grid.append(card);
   }

@@ -241,15 +241,15 @@ export function createApp(env = process.env, fetcher = fetch) {
       if (req.method === 'GET' && path === '/api/catalog') {
         const products = sources.flatMap(source=>rows(source).products)
           .filter(item=>item.eligible && item.published)
-          .map(item=>({name:item.name,plan:item.plan,brand:item.brand,price:item.price,url:item.url,
-            source:item.source,id:item.id,buyable:checkout.sellable(item),
+          .map(item=>({name:item.name,plan:item.plan,brand:item.brand,price:item.price,
+            source:item.source,id:item.id,
             referencePrice:item.listingPrice??null}));
         return json(200,{products});
       }
-      const publicPost = ['/api/checkout','/api/payments/gpmpay'].includes(path) && req.method === 'POST';
-      if (req.method === 'GET' && path === '/api/order') {
-        return json(...checkout.status(req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1]));
-      }
+      const publicPost = ['/api/checkout','/api/order/payment','/api/payments/gpmpay'].includes(path) && req.method === 'POST';
+      const orderToken = req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+      if (req.method === 'GET' && path === '/api/order') return json(...checkout.status(orderToken));
+      if (req.method === 'POST' && path === '/api/order/payment') return json(...checkout.startPayment(orderToken));
       if (!publicPost && !path.startsWith('/api/admin/')) return json(404,{message:'Không tìm thấy.'});
       const auth = req.headers.authorization;
       if (!publicPost && (!key || !auth?.startsWith('Bearer ') || !timingSafeEqual(key,digest(auth.slice(7))))) {
@@ -271,7 +271,7 @@ export function createApp(env = process.env, fetcher = fetch) {
       let input;
       const raw = Buffer.concat(chunks);
       try { input = JSON.parse(raw); } catch { return json(400,{message:'JSON không hợp lệ.'}); }
-      if (path === '/api/checkout') return json(...await checkout.create(input));
+      if (path === '/api/checkout') return json(...checkout.create(input));
       if (path === '/api/payments/gpmpay') return json(...checkout.webhook(input,raw,req.headers['x-gpmpay-signature']));
       if (path === '/api/admin/order-reconcile') {
         if (!Number.isSafeInteger(input?.code)) return json(400,{message:'Mã đơn không hợp lệ.'});

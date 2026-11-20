@@ -31,6 +31,7 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
       db.exec("UPDATE checkout_orders SET supplier_attempt_at=updated WHERE state='ordering'");
     }
     if (!columns.includes('supplier_ref')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_ref TEXT');
+    if (!columns.includes('payment_started')) db.exec('ALTER TABLE checkout_orders ADD COLUMN payment_started INTEGER');
     if (!columns.includes('supplier_cost')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_cost REAL');
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS checkout_supplier_ref ON checkout_orders(source,supplier_ref) WHERE supplier_ref IS NOT NULL');
     db.prepare("UPDATE checkout_orders SET state='review', detail=?, updated=? WHERE state='ordering' AND supplier_attempt_at IS NOT NULL")
@@ -74,17 +75,46 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     return JSON.parse(Buffer.concat([cipher.update(blob.subarray(28)),cipher.final()]));
   }
 
-  async function create(input) {
-    if (!configured) return [503,{message:'Thanh toán ShopMMO chưa được kích hoạt.'}];
+  function create(input) {
     if (!['uniz','melody'].includes(input?.source) || typeof input.id !== 'string') return [400,{message:'Gói không hợp lệ.'}];
     const item = rows(input.source).products.find(row=>row.id===input.id);
-    if (!item || !sellable(item) || item.price !== input.price) return [409,{message:'Gói đã đổi giá, hết hàng hoặc chưa mở thanh toán.'}];
+    const quote = item?.price ?? item?.listingPrice;
+    if (!item?.eligible || !item.published || !Number.isFinite(quote) || quote < 0 || quote !== input.price) {
+      return [409,{message:'Gói đã đổi giá hoặc hết hàng. Hãy tải lại danh mục.'}];
+    }
     const code = randomInt(100_000_000_000,999_999_999_999);
     const token = randomBytes(32).toString('hex');
     const time = Date.now();
-    db.prepare("INSERT INTO checkout_orders(code,token_hash,source,sku,fingerprint,name,amount,state,created,updated) VALUES(?,?,?,?,?,?,?,'pending',?,?)")
-      .run(code,hash(token),item.source,item.id,item.fingerprint,item.name,item.price,time,time);
-    return [201,{code,token}];
+    const paymentStarted = sellable(item)?time:null;
+    const state = paymentStarted ? 'pending' : 'awaiting_payment';
+    const name = [item.name,item.plan].filter(Boolean).join(' · ');
+    db.prepare('INSERT INTO checkout_orders(code,token_hash,source,sku,fingerprint,name,amount,state,payment_started,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run(code,hash(token),item.source,item.id,item.fingerprint,name,quote,state,paymentStarted,time,time);
+    return [201,{code,token,state}];
+  }
+
+  function findCustomerOrder(token) {
+    if (!/^[0-9a-f]{64}$/.test(token ?? '')) return null;
+    return db.prepare('SELECT * FROM checkout_orders WHERE token_hash=?').get(hash(token));
+  }
+
+  function startPayment(token) {
+    const order = findCustomerOrder(token);
+    if (!order) return [404,{message:'Không tìm thấy đơn.'}];
+    if (order.state === 'pending') return [200,{state:'pending'}];
+    if (order.state !== 'awaiting_payment') return [409,{message:'Đơn này không thể mở thanh toán.'}];
+    const item = rows(order.source).products.find(row=>row.id===order.sku);
+    if (!item?.eligible || !item.published || item.fingerprint !== order.fingerprint) {
+      return [409,{message:'Gói đã thay đổi hoặc hết hàng. Hãy kiểm tra lại trong cửa hàng.'}];
+    }
+    if (Number.isSafeInteger(item.price) && item.price !== order.amount) {
+      return [409,{message:'Giá bán đã thay đổi. Hãy kiểm tra giá mới và đặt lại trong cửa hàng.'}];
+    }
+    if (!sellable(item)) return [409,{message:'ShopMMO chưa thể nhận thanh toán cho đơn này. Vui lòng thử lại sau.'}];
+    const now = Date.now();
+    db.prepare("UPDATE checkout_orders SET state='pending',payment_started=?,updated=? WHERE code=? AND state='awaiting_payment'")
+      .run(now,now,order.code);
+    return [200,{state:'pending'}];
   }
 
   function deliver(order,result) {
@@ -166,7 +196,8 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     const order = get.get(Number(codes[0][1]));
     if (!order || order.state !== 'pending' || db.prepare('SELECT 1 FROM checkout_orders WHERE payment_ref=?').get(data.id)) return [200,{ok:true}];
     const at = Date.parse(data.transactionDate);
-    const matched = data.transferAmount === order.amount && at >= order.created - 1000 && at <= order.created + expiration;
+    const started = order.payment_started ?? order.created;
+    const matched = data.transferAmount === order.amount && at >= started - 1000 && at <= started + expiration;
     const next = matched ? 'paid' : 'review';
     const detail = matched ? null : 'Tiền vào sai số tiền hoặc ngoài thời hạn. Cần đối soát thủ công.';
     db.prepare("UPDATE checkout_orders SET state=?, payment_ref=?, detail=?, updated=? WHERE code=? AND state='pending'")
@@ -176,13 +207,13 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
   }
 
   function status(token) {
-    if (!/^[0-9a-f]{64}$/.test(token ?? '')) return [404,{message:'Không tìm thấy đơn.'}];
-    const order = db.prepare('SELECT * FROM checkout_orders WHERE token_hash=?').get(hash(token));
+    const order = findCustomerOrder(token);
     if (!order) return [404,{message:'Không tìm thấy đơn.'}];
     const {code,name,amount}=order;
-    const expired = order.state==='pending' && Date.now() > order.created+expiration;
+    const expires = (order.payment_started ?? order.created)+expiration;
+    const expired = order.state==='pending' && Date.now() > expires;
     const state = expired ? 'expired' : order.state;
-    const payment = state==='pending' && configured ? {account,bin,holder,content:'SMMO'+code,expires:order.created+expiration} : null;
+    const payment = state==='pending' && configured ? {account,bin,holder,content:'SMMO'+code,expires} : null;
     return [200,{code,name,amount,state,payment,delivery:state==='delivered' && secret ? decrypt(order):null}];
   }
 
@@ -190,5 +221,5 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     for (const source of ['uniz','melody']) void processSource(source);
   };
   const list = () => db.prepare('SELECT code,source,sku,name,amount,state,detail,payment_ref,supplier_ref,supplier_cost,supplier_attempt_at,created,updated FROM checkout_orders ORDER BY created DESC LIMIT 50').all();
-  return {create,webhook,status,sellable,list,resume,reconcile,suppliers,configured};
+  return {create,startPayment,webhook,status,sellable,list,resume,reconcile,suppliers,configured};
 }

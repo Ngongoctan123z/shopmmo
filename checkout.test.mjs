@@ -105,9 +105,21 @@ try {
   await deliver(paymentFor(poor));
   await waitFor(poor,'review');
   assert.equal(purchases,1,'No upstream POST if the wallet is empty');
-  assert.equal((await post('/api/checkout',{source:'melody',id:item.id,price:35000})).status,409);
+  const deferred=await create();
+  assert.equal(deferred.state,'awaiting_payment');
+  assert.equal((await status(deferred)).payment,null);
+  const deferredPayment=paymentFor(deferred);
+  await deliver(deferredPayment);
+  assert.equal(purchases,1,'A saved order is not payable yet');
+  const startPayment=entry=>fetch(base+'/api/order/payment',{method:'POST',headers:{Authorization:'Bearer '+entry.token}});
+  assert.equal((await startPayment(deferred)).status,409);
+  assert.equal((await fetch(base+'/api/order/payment',{method:'POST'})).status,404);
   balance=100000;
   await app.checkout.suppliers.inspect('melody');
+  app.db.prepare('UPDATE checkout_orders SET created=? WHERE code=?').run(Date.now()-60*60_000,deferred.code);
+  assert.equal((await startPayment(deferred)).status,200);
+  assert((await status(deferred)).payment.expires>Date.now(),'The pending order receives a new payment deadline');
+  assert.equal(purchases,1,'Opening payment does not buy anything');
   const pending=await create();
   outcome='pending';
   await deliver(paymentFor(pending));
@@ -142,5 +154,6 @@ try {
   await app.sync('uniz');
   const catalog = await (await fetch(base+'/api/catalog')).json();
   assert(!catalog.products.some(p=>p.id===unizSku),'A provider switch to manual delivery hides the offer');
+  assert(catalog.products.every(product=>!Object.hasOwn(product,'url')),'Storefront does not receive supplier URLs');
   console.log('PASS: both suppliers, payment checks, wallet gating, encrypted delivery, read-only reconciliation, timeout and duplicate protection');
 } finally { await new Promise(resolve=>app.server.close(resolve)); app.db.close(); }
