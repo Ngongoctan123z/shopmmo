@@ -206,7 +206,7 @@ export function createApp(env = process.env, fetcher = fetch) {
         return json(401,{message:'Cần mã quản trị hợp lệ.'});
       }
       if (req.method==='GET' && path==='/api/admin/state') {
-        return json(200,{brands,checkoutConfigured:checkout.configured,orders:checkout.list(),sources:sources.map(source=>({source,configured:configured(source),running:running.has(source),...rows(source)})),
+        return json(200,{brands,checkoutConfigured:checkout.configured,orders:checkout.list(),sources:sources.map(source=>({source,configured:configured(source),running:running.has(source),procurement:checkout.suppliers.status(source),...rows(source)})),
           events:db.prepare('SELECT * FROM events ORDER BY seq DESC LIMIT 30').all()});
       }
       if (req.method !== 'POST') return json(405,{message:'Phương thức không được hỗ trợ.'});
@@ -223,8 +223,16 @@ export function createApp(env = process.env, fetcher = fetch) {
       try { input = JSON.parse(raw); } catch { return json(400,{message:'JSON không hợp lệ.'}); }
       if (path === '/api/checkout') return json(...await checkout.create(input));
       if (path === '/api/payments/gpmpay') return json(...checkout.webhook(input,raw,req.headers['x-gpmpay-signature']));
+      if (path === '/api/admin/order-reconcile') {
+        if (!Number.isSafeInteger(input?.code)) return json(400,{message:'Mã đơn không hợp lệ.'});
+        return json(...await checkout.reconcile(input.code));
+      }
       if (!sources.includes(input?.source)) return json(400,{message:'Nguồn hàng không hợp lệ.'});
       const source = input.source;
+      if (path === '/api/admin/supplier-check') {
+        const result = await checkout.suppliers.inspect(source);
+        return json(result.ok ? 200 : 502,{...result,message:result.message ?? 'Đã kiểm tra ví nguồn.'});
+      }
       if (path === '/api/admin/sync') {
         const result = await sync(source);
         return json(result.ok ? 200 : 502,result);
@@ -256,7 +264,8 @@ export function createApp(env = process.env, fetcher = fetch) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const {server,sync,checkout} = createApp();
-  const refresh = () => Promise.all(sources.map(sync)).catch(() => console.error('Lỗi tác vụ đồng bộ.'));
+  const refresh = () => Promise.all(sources.flatMap(source=>[sync(source),checkout.suppliers.inspect(source)]))
+    .catch(() => console.error('Lỗi tác vụ đồng bộ.'));
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
   const port = Number(process.env.PORT || 8787);

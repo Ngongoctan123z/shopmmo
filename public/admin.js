@@ -1,5 +1,6 @@
 const $ = id=>document.getElementById(id);
 const sourceName = {uniz:'Uniz',melody:'MelodyApp'};
+const formatVnd = amount => new Intl.NumberFormat('vi-VN').format(amount)+' ₫';
 const stamp = at => at ? new Date(at).toLocaleString('vi-VN') : 'Chưa đồng bộ';
 const node = (tag,text) => Object.assign(document.createElement(tag),{textContent:text ?? ''});
 let token = '', state, page = 0;
@@ -36,8 +37,17 @@ function render(){
     const box=node('div');box.className='source';
     const sync=action('Đồng bộ ngay',async()=>{try{return (await api('sync',{source:source.source})).message;}finally{await refresh();}});
     sync.disabled=!source.configured || source.running;
+    const supplier=source.procurement;
+    const check=action('Kiểm tra ví nguồn',async()=>{try{return (await api('supplier-check',{source:source.source})).message;}finally{await refresh();}});
+    check.disabled=!supplier.keyConfigured;
+    const wallet=supplier.ok?'Số dư ví '+formatVnd(supplier.balance)+(supplier.fresh?'':' · Đã cũ'):
+      supplier.message ?? 'Chưa kiểm tra ví nguồn';
+    const permission=supplier.canWrite===true?'Có quyền tạo đơn':supplier.canWrite===false?
+      'Thiếu quyền tạo đơn':source.source==='uniz'&&supplier.ok?'Khóa hợp lệ. API ví không cho biết quyền tạo đơn.':'Chưa xác minh quyền tạo đơn.';
     box.append(node('strong',sourceName[source.source]),node('p',source.configured?'Đã bật kết nối đọc':'Thiếu khóa máy chủ'),
-      node('p',stamp(source.updated)+(source.updated&&!source.fresh?' · Tồn kho đã cũ':'')),sync);
+      node('p','Danh mục · '+stamp(source.updated)+(source.updated&&!source.fresh?' · Tồn kho đã cũ':'')),
+      node('p',wallet+(supplier.checkedAt?' · '+stamp(supplier.checkedAt):'')),node('p',permission),
+      node('p',supplier.enabled?'Đã bật chế độ nhập hàng':'Đang tắt chế độ nhập hàng'),sync,' ',check);
     $('sources').append(box);
   }
   $('events').replaceChildren(...state.events.map(item=>node('li',stamp(item.at)+' · '+sourceName[item.source]+' · '+item.action+' · '+item.detail)));
@@ -46,8 +56,17 @@ function render(){
     const row=node('tr');
     const ref=node('td',String(item.code));ref.append(node('small',item.name));
     const detail=node('td',item.state);if(item.detail)detail.append(node('small',item.detail));
-    if(item.payment_ref)detail.append(node('small',item.payment_ref));
-    row.append(ref,node('td',new Intl.NumberFormat('vi-VN').format(item.amount)+' ₫'),detail);
+    if(item.payment_ref)detail.append(node('small','GPM Pay · '+item.payment_ref));
+    if(item.supplier_ref)detail.append(node('small',sourceName[item.source]+' · '+item.supplier_ref));
+    if(item.supplier_cost!==null)detail.append(node('small','Giá vốn thực tế '+formatVnd(item.supplier_cost)));
+    if(item.state==='review'&&item.supplier_ref){
+      detail.append(action('Đối soát nguồn',async()=>{
+        const result=await api('order-reconcile',{code:item.code});
+        await refresh();
+        return result.message;
+      }));
+    }
+    row.append(ref,node('td',formatVnd(item.amount)),detail);
     return row;
   }));
   renderRows();

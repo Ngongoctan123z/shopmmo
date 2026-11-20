@@ -44,3 +44,10 @@ Khi triển khai công khai, đặt khóa nhà cung cấp bằng secret của m�
 - Chạy kiểm thử không giao dịch thật bằng node checkout.test.mjs.
 
 Tài liệu: https://docs.gpmpay.com/webhook và https://docs.gpmpay.com/
+
+## Nhập hàng và đối soát nguồn
+
+- Nút mua chỉ mở nếu nguồn được bật, số dư vừa được xác nhận và đủ giá vốn. Kiểm tra ví trong mục Kết nối API của admin. MelodyApp xác minh quyền qua account.info. Uniz xác thực khóa qua balance, phản hồi đó không cho biết quyền tạo đơn.
+- Sau thanh toán, mỗi nguồn xử lý từng đơn một. Trước POST, backend kiểm tra lại SKU, tồn kho, giá vốn và ví. Nếu đã chuẩn bị gửi POST rồi mất phản hồi, đơn chuyển sang đối soát. Backend không tự gửi lại lệnh mua.
+- Nếu nhà cung cấp đã trả mã đơn, nút Đối soát nguồn dùng GET và kiểm tra mã đơn cùng SKU trước khi giao cho khách. MelodyApp dùng orders.status. Endpoint GET được Uniz mô tả trả HTTP 405 trong lần kiểm tra trực tiếp, nên còn cần nhà cung cấp xác nhận đường dẫn hoặc đối soát thủ công.
+- Kiểm thử tích hợp bằng node checkout.test.mjs dùng phản hồi giả cho cả hai nhà cung cấp. Có thể kiểm tra xác thực kết nối bằng nút Kiểm tra ví nguồn. POST đơn test lên nguồn thật chỉ dùng mã không tồn tại và số lượng 0. Kết quả từ chối xác nhận đường gọi và kiểm tra dữ liệu, không chứng minh định dạng giao hàng thành công.

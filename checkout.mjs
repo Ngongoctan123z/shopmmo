@@ -1,3 +1,4 @@
+import { createSuppliers } from './suppliers.mjs';
 import { createHash, createHmac, timingSafeEqual, randomBytes, randomInt, createCipheriv, createDecipheriv } from 'node:crypto';
 
 const hash = token => createHash('sha256').update(token).digest('hex');
@@ -21,9 +22,26 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     );
     CREATE INDEX IF NOT EXISTS checkout_state ON checkout_orders(state);
   `);
-  // A prior process could have charged a supplier before it stopped.
-  db.prepare("UPDATE checkout_orders SET state='review', detail=?, updated=? WHERE state='ordering'")
-    .run('Tiến trình bị ngắt khi nhập hàng. Đối soát với nhà cung cấp.',Date.now());
+  const columns = db.prepare('PRAGMA table_info(checkout_orders)').all().map(column=>column.name);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!columns.includes('supplier_attempt_at')) {
+      db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_attempt_at INTEGER');
+      // Older versions cannot distinguish an interrupted check from an interrupted purchase.
+      db.exec("UPDATE checkout_orders SET supplier_attempt_at=updated WHERE state='ordering'");
+    }
+    if (!columns.includes('supplier_ref')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_ref TEXT');
+    if (!columns.includes('supplier_cost')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_cost REAL');
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS checkout_supplier_ref ON checkout_orders(source,supplier_ref) WHERE supplier_ref IS NOT NULL');
+    db.prepare("UPDATE checkout_orders SET state='review', detail=?, updated=? WHERE state='ordering' AND supplier_attempt_at IS NOT NULL")
+      .run('Tiến trình bị ngắt sau khi chuẩn bị gửi lệnh mua. Cần đối soát với nguồn.',Date.now());
+    db.exec("UPDATE checkout_orders SET state='paid' WHERE state='ordering' AND supplier_attempt_at IS NULL");
+    db.exec('COMMIT');
+  } catch(error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  const suppliers = createSuppliers(env,fetcher);
   const get = db.prepare('SELECT * FROM checkout_orders WHERE code=?');
   const update = db.prepare('UPDATE checkout_orders SET state=?, detail=?, updated=? WHERE code=?');
   const secret = /^[0-9a-f]{64}$/i.test(env.DELIVERY_KEY ?? '') ? Buffer.from(env.DELIVERY_KEY,'hex') : null;
@@ -33,21 +51,12 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
   const webhookSecret = env.GPMPAY_WEBHOOK_SECRET ?? '';
   const configured = Boolean(secret && /^\d{6}$/.test(bin) && /^[a-z0-9]{5,30}$/i.test(account) &&
     holder && webhookSecret.length >= 32);
-  const canOrder = source => source === 'melody'
-    ? Boolean(env.MELODY_ORDER_ENABLED === 'true' && env.MELODY_API_KEY && env.MELODY_API_SECRET)
-    : Boolean(env.UNIZ_ORDER_ENABLED === 'true' && env.UNIZ_API_KEY);
-  const sellable = item => Boolean(configured && canOrder(item.source) && item.eligible && item.published &&
-    Number.isSafeInteger(item.price) && item.price >= Math.max(2000,item.referencePrice));
-
-  async function request(url, headers, body) {
-    const response = await fetcher(url,{
-      headers:body ? {...headers,'Content-Type':'application/json'} : headers,
-      method:body?'POST':'GET', body:body?JSON.stringify(body):undefined,
-      redirect:'error', signal:AbortSignal.timeout(12_000)
-    });
-    if (!response.ok) throw Error('HTTP ' + response.status);
-    return response.json();
-  }
+  const sellable = item => {
+    if (!configured || !item.eligible || !item.published || !Number.isSafeInteger(item.price) ||
+      item.price < Math.max(2000,item.referencePrice)) return false;
+    const wallet = suppliers.status(item.source);
+    return wallet.enabled && wallet.fresh && wallet.canWrite !== false && wallet.balance >= item.referencePrice;
+  };
 
   function encrypt(items, code) {
     const iv = randomBytes(12);
@@ -78,43 +87,71 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     return [201,{code,token}];
   }
 
-  async function fulfill(code) {
-    const order = get.get(code);
-    if (!order || order.state !== 'paid' || !configured || !canOrder(order.source)) return;
-    const claimed = db.prepare("UPDATE checkout_orders SET state='ordering', updated=? WHERE code=? AND state='paid'").run(Date.now(),code);
+  function deliver(order,result) {
+    const costIssue = result.cost !== null && result.cost > order.amount ? 'Giá vốn nguồn cao hơn số tiền đã thu.' : null;
+    const {changes} = db.prepare("UPDATE checkout_orders SET state='delivered', delivery=?, supplier_ref=?, supplier_cost=?, detail=?, updated=? WHERE code=? AND state IN ('ordering','review')")
+      .run(encrypt(result.items,order.code),result.ref,result.cost,costIssue,Date.now(),order.code);
+    return Boolean(changes);
+  }
+
+  function recordReview(order, message, ref) {
+    if (ref && db.prepare('SELECT 1 FROM checkout_orders WHERE source=? AND supplier_ref=? AND code<>?').get(order.source,ref,order.code)) {
+      update.run('review','Mã đơn nguồn đã được gắn với một đơn ShopMMO khác.',Date.now(),order.code);
+      return;
+    }
+    db.prepare("UPDATE checkout_orders SET state='review', supplier_ref=COALESCE(?,supplier_ref), detail=?, updated=? WHERE code=?")
+      .run(ref??null,message,Date.now(),order.code);
+  }
+
+  async function fulfill(order) {
+    const claimed = db.prepare("UPDATE checkout_orders SET state='ordering', updated=? WHERE code=? AND state='paid'").run(Date.now(),order.code);
     if (!claimed.changes) return;
     let upstreamStarted = false;
-    let upstreamRef = '';
+    let result;
     try {
-      if (!(await sync(order.source)).ok) throw Error();
+      if (!(await sync(order.source)).ok) throw Error('Không đồng bộ được tồn kho từ nguồn.');
       const item = rows(order.source).products.find(row=>row.id===order.sku);
-      if (!item || !item.eligible || !item.published || item.fingerprint !== order.fingerprint || order.amount < item.referencePrice) throw Error();
+      if (!item || !item.eligible || !item.published || item.fingerprint !== order.fingerprint) throw Error('Gói không còn đủ điều kiện giao ngay.');
+      if (order.amount < item.referencePrice) throw Error('Giá vốn nguồn đã cao hơn số tiền đã thu.');
+      const wallet = await suppliers.inspect(order.source);
+      if (!wallet.ok) throw Error(wallet.message);
+      if (wallet.canWrite === false) throw Error('Khóa API thiếu quyền tạo đơn.');
+      if (wallet.balance < item.referencePrice) throw Error('Ví nguồn không đủ tiền.');
+      db.prepare('UPDATE checkout_orders SET supplier_attempt_at=? WHERE code=?').run(Date.now(),order.code);
       upstreamStarted = true;
-      let items;
-      if (order.source === 'melody') {
-        const result = await request('https://melodyapp.vn/api/v1/orders/create',
-          {'X-API-Key':env.MELODY_API_KEY,'X-API-Secret':env.MELODY_API_SECRET},
-          {items:[{plan_id:Number(order.sku),quantity:1}]});
-        const receipt = result.data?.orders?.[0];
-        upstreamRef = String(receipt?.trans_id ?? '').slice(0,80);
-        if (result.success !== true || receipt?.status !== 'completed' || receipt.plan_id !== Number(order.sku)) throw Error();
-        items = receipt.delivery?.items;
-      } else {
-        const result = await request('https://unizvn.com/api/v1/orders',{'x-api-key':env.UNIZ_API_KEY},{slug:order.sku,qty:1});
-        const receipt = result.order ?? result.data?.order ?? result.data ?? result;
-        upstreamRef = String(receipt.code ?? receipt.orderCode ?? '').slice(0,80);
-        if (result.success !== true || (receipt.slug && receipt.slug !== order.sku) ||
-          ['pending','failed','cancelled'].includes(String(receipt.status).toLowerCase())) throw Error();
-        items = receipt.accounts ?? receipt.delivery?.items ?? receipt.items;
-      }
-      // Only a documented delivery of one non-empty credential string can complete an order.
-      if (!Array.isArray(items) || items.length !== 1 || typeof items[0] !== 'string' ||
-        !items[0].trim() || items[0].length > 16000) throw Error();
-      db.prepare("UPDATE checkout_orders SET state='delivered', delivery=?, detail=?, updated=? WHERE code=?")
-        .run(encrypt(items,code),upstreamRef || null,Date.now(),code);
+      result = await suppliers.buy(order.source,order.sku);
+      deliver(order,result);
+    } catch(error) {
+      const detail = upstreamStarted ? error.message + ' Cần đối soát nguồn trước khi xử lý lại.' : error.message + ' Chưa gửi lệnh mua.';
+      recordReview(order,detail,result?.ref ?? error.ref);
+    }
+  }
+
+  const active = new Set();
+  const queue = db.prepare("SELECT * FROM checkout_orders WHERE source=? AND state='paid' ORDER BY updated,code LIMIT 1");
+  async function processSource(source) {
+    if (active.has(source) || !configured || !suppliers.enabled(source)) return;
+    active.add(source);
+    try {
+      let order;
+      while ((order=queue.get(source))) await fulfill(order);
     } catch {
-      const detail = upstreamStarted ? 'Cần đối soát với nhà cung cấp. Không gửi lại lệnh mua.' : 'Gói hoặc giá vốn thay đổi, hoặc đồng bộ thất bại trước khi nhập hàng.';
-      update.run('review',upstreamRef ? detail + ' Mã nguồn: ' + upstreamRef : detail,Date.now(),code);
+      console.error('Không thể ghi kết quả nhập hàng của nguồn '+source+'.');
+    } finally {
+      active.delete(source);
+    }
+  }
+
+  async function reconcile(code) {
+    const order = get.get(code);
+    if (!secret || !order || order.state !== 'review' || !order.supplier_ref || !order.supplier_attempt_at) {
+      return [409,{message:'Cần một đơn đang đối soát có mã nguồn do API trả về.'}];
+    }
+    try {
+      const result = await suppliers.lookup(order.source,order.sku,order.supplier_ref);
+      return deliver(order,result) ? [200,{message:'Đã xác nhận và giao tài khoản từ đơn nguồn.'}] : [409,{message:'Trạng thái đơn đã thay đổi.'}];
+    } catch(error) {
+      return [502,{message:error.message}];
     }
   }
 
@@ -134,7 +171,7 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     const detail = matched ? null : 'Tiền vào sai số tiền hoặc ngoài thời hạn. Cần đối soát thủ công.';
     db.prepare("UPDATE checkout_orders SET state=?, payment_ref=?, detail=?, updated=? WHERE code=? AND state='pending'")
       .run(next,data.id,detail,Date.now(),order.code);
-    if (matched) void fulfill(order.code);
+    if (matched) void processSource(order.source);
     return [200,{ok:true}];
   }
 
@@ -150,9 +187,8 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
   }
 
   const resume = () => {
-    for (const order of db.prepare("SELECT code FROM checkout_orders WHERE state='paid' LIMIT 30").all()) void fulfill(order.code);
+    for (const source of ['uniz','melody']) void processSource(source);
   };
-  const list = () => db.prepare('SELECT code,source,sku,name,amount,state,detail,payment_ref,created,updated FROM checkout_orders ORDER BY created DESC LIMIT 50').all();
-  return {create,webhook,status,sellable,list,resume,configured};
+  const list = () => db.prepare('SELECT code,source,sku,name,amount,state,detail,payment_ref,supplier_ref,supplier_cost,supplier_attempt_at,created,updated FROM checkout_orders ORDER BY created DESC LIMIT 50').all();
+  return {create,webhook,status,sellable,list,resume,reconcile,suppliers,configured};
 }
-
