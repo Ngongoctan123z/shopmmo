@@ -1,34 +1,26 @@
 <!doctype html>
 <html lang="vi">
+<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Danh mục tài khoản số có sẵn, được chọn lọc theo nguồn cung.">
-<title>ShopMMO | Tài khoản số</title>
-<style>
-:root{font-family:"Segoe UI",system-ui,sans-serif;color:#162b25;background:#f4f7f5;--green:#087453;--line:#dce7e1;--muted:#526760}
-*{box-sizing:border-box}body{margin:0}a{color:var(--green)}button,input,select{font:inherit}button,select{cursor:pointer}a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #179e77;outline-offset:3px}.wrap{width:min(1120px,calc(100% - 36px));margin:auto}
-header{background:white;border-bottom:1px solid var(--line)}.bar{min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;gap:10px;align-items:center;text-decoration:none;color:#13382c;font-weight:850;font-size:24px}.brand b{display:grid;place-items:center;background:var(--green);color:white;border-radius:10px;width:37px;height:37px;font-size:20px}.nav{display:flex;gap:22px}.nav a{text-decoration:none;font-weight:650;font-size:.94rem}
-.hero{margin-top:28px;border-radius:18px;background:linear-gradient(115deg,#073f31,#0d7957);color:white;padding:clamp(24px,5vw,60px);position:relative;overflow:hidden;isolation:isolate}.hero::after{content:"";position:absolute;width:360px;height:360px;border:1px solid #ffffff40;border-radius:50%;right:-60px;top:-100px;box-shadow:0 0 0 40px #ffffff10,0 0 0 85px #ffffff0b;z-index:-1}.hero h1{font-size:clamp(2rem,6vw,3.85rem);letter-spacing:-.045em;margin:0 0 12px;line-height:1.03}.hero p{margin:0 0 24px;color:#e1f6ed;max-width:32rem;line-height:1.55}.primary{border:0;display:inline-flex;text-decoration:none;background:#087453;color:white;padding:10px 14px;border-radius:8px;font-weight:650;align-items:center;justify-content:center}.hero .primary{background:white;color:#07573e}
-.catalog{margin:32px auto 44px}.section-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}.section-top h2{margin:0;font-size:1.65rem}.count,.note,.desc,footer{color:var(--muted)}.filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px;margin:16px 0}.filters input,.filters select{min-width:0;width:100%;background:white;border:1px solid #bdcfc6;border-radius:8px;padding:11px;color:#18352b}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:white;border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px}.card-top,.card-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px}.card-bottom{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);flex-wrap:wrap}.mark{display:grid;place-items:center;width:50px;height:50px;border-radius:12px;color:white;font-size:22px;font-weight:900}.stock{font-size:.875rem;background:#e6f5ee;color:#086247;padding:5px 9px;border-radius:7px;font-weight:650}.card h3{margin:0;font-size:1.2rem}.desc{margin:0;line-height:1.45}.meta{font-size:.875rem;color:var(--muted)}.price{font-size:1.13rem;font-weight:800;color:#075d42}.note{line-height:1.55;margin:16px 0}.empty{grid-column:1/-1;background:white;border:1px dashed var(--line);padding:24px;border-radius:12px}.info{padding:20px;background:#e8f2ec;border-radius:12px;margin-bottom:28px;line-height:1.55}.info h2{margin:0 0 8px;font-size:1.15rem}.info p{margin:0}footer{border-top:1px solid var(--line);padding:20px 0}
-@media(max-width:780px){.filters{grid-template-columns:1fr 1fr}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:510px){.grid{grid-template-columns:1fr}.nav{gap:9px}.nav a{font-size:.84rem}.brand{font-size:20px}.hero{margin-top:16px}.filters{grid-template-columns:1fr}.bar{min-height:62px}}
-.hero{margin-top:16px;padding:clamp(18px,3vw,30px)}.hero h1{font-size:clamp(1.55rem,4vw,2.35rem);margin:0 0 7px}.hero p{margin:0;font-size:.95rem;max-width:none}.hero .primary{margin-top:12px;padding:7px 11px}.catalog{margin-top:22px}.filters{grid-template-columns:minmax(0,310px) minmax(145px,200px);max-width:540px}.stock{align-self:flex-start}
-@media(max-width:470px){.filters{grid-template-columns:1fr}}
-</style>
-<header><div class="wrap bar"><a class="brand" href="#"><b aria-hidden="true">S</b>ShopMMO</a><nav class="nav" aria-label="Điều hướng"><a href="#san-pham">Sản phẩm</a><a href="/orders">Đơn hàng</a></nav></div></header>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Chọn gói tài khoản số, đặt hàng và theo dõi giao hàng tại ShopMMO.">
+<title>ShopMMO | Cửa hàng tài khoản số</title>
+<link rel="stylesheet" href="/store.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham" aria-current="page">Sản phẩm</a><a href="/orders">Đơn hàng</a></nav></div></header>
 <main class="wrap">
-<section class="hero"><h1>Tài khoản số có sẵn</h1><p>CapCut, Canva và ứng dụng làm đẹp có gói giao ngay.</p><a class="primary" href="#san-pham">Xem sản phẩm</a></section>
-<section class="catalog" id="san-pham"><div class="section-top"><h2>Danh mục sản phẩm</h2><span class="count" id="count" aria-live="polite"></span></div>
-<div class="filters">
-<input id="search" type="search" aria-label="Tìm tên sản phẩm" placeholder="Tìm tên sản phẩm…">
-<select id="product" aria-label="Sản phẩm"><option value="">Sản phẩm</option><option>CapCut</option><option>Canva</option><option>Meitu</option><option>Hypic</option><option>Wink</option><option>FPT Play</option></select>
-</div>
-<p id="purchase-status" role="status"></p><div class="grid" id="grid"></div>
-<p class="note">Đặt hàng và theo dõi giao tài khoản ngay trên ShopMMO.</p>
-<noscript>Bật JavaScript để xem danh mục và bộ lọc.</noscript>
-</section>
-
-</main><footer><div class="wrap">ShopMMO · Danh mục tài khoản số</div></footer>
+  <section class="intro"><h1>Cửa hàng tài khoản số</h1><p class="muted">CapCut, Canva và ứng dụng làm đẹp. Chọn gói và theo dõi đơn ngay trên ShopMMO.</p></section>
+  <section class="catalog" id="san-pham" aria-labelledby="catalog-title">
+    <div class="catalog-head">
+      <div><h2 id="catalog-title">Sản phẩm</h2><p class="muted" id="count" aria-live="polite"></p></div>
+      <div class="filters"><input id="search" type="search" aria-label="Tìm sản phẩm" placeholder="Tìm sản phẩm hoặc gói…"><select id="product" aria-label="Sản phẩm"><option value="">Tất cả sản phẩm</option></select></div>
+    </div>
+    <div class="panel catalog-list" id="grid"><p class="empty">Đang tải danh mục…</p></div>
+    <noscript>Bật JavaScript để chọn gói và đặt hàng.</noscript>
+  </section>
+</main>
+<footer class="site-footer"><div class="wrap"><span>ShopMMO</span><a href="/orders">Theo dõi đơn hàng</a></div></footer>
 <script src="/shop.js" defer></script>
+</body>
 </html>
-
-

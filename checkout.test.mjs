@@ -14,16 +14,16 @@ const unizSku='capcut-pro-ca-nhan-1-thang-bhf';
 let outcome='completed';
 const fetcher=(url,options)=>{
   if(url.startsWith('https://unizvn.com/')){
-    if(url.includes('/p/')) return new Response('<h1>CapCut Pro</h1><span>'+unizBadge+'</span>');
+    if(url.includes('/p/')) return new Response('<h1>CapCut Pro</h1><span>'+unizBadge+'</span><span>Còn 4</span>');
     assert.equal(options.headers['x-api-key'],'fixture-uniz');
     if(url.endsWith('/balance')) return new Response(JSON.stringify({status:true,success:true,balance:100000}));
     if(url.endsWith('/products')) return new Response(JSON.stringify({success:true,total:1,
       products:[{slug:unizSku,name:'CapCut Pro',category:'Giải trí',price:30000,inStock:true}]}));
     assert(url.endsWith('/orders'));
     assert.equal(options.method,'POST');
-    assert.deepEqual(JSON.parse(options.body),{slug:unizSku,qty:1});
+    assert.deepEqual(JSON.parse(options.body),{slug:unizSku,qty:2});
     unizPurchases++;
-    return new Response(JSON.stringify({success:true,order:{code:'UZ-FIXTURE',slug:unizSku,quantity:1,accounts:['uniz | sample']}}));
+    return new Response(JSON.stringify({success:true,order:{code:'UZ-FIXTURE',slug:unizSku,quantity:2,accounts:['uniz | sample 1','uniz | sample 2']}}));
   }
   if(url.endsWith('/account/info')){
     return new Response(JSON.stringify({success:true,data:{user:{balance},api_key:{permissions:['orders.create']}}}));
@@ -142,10 +142,16 @@ try {
   const unizItem=unizState.sources.find(s=>s.source==='uniz').products[0];
   assert.equal((await post('/api/admin/review',{source:'uniz',id:unizItem.id,fingerprint:unizItem.fingerprint,brand:'CapCut',price:35000,
     published:true,confirmed:true},auth)).status,200);
-  const unizOrder=await (await post('/api/checkout',{source:'uniz',id:unizItem.id,price:35000})).json();
-  const unizPayment=paymentFor(unizOrder);
+  assert.equal((await post('/api/checkout',{source:'uniz',id:unizItem.id,price:35000,quantity:5})).status,400);
+  const unizOrder=await (await post('/api/checkout',{source:'uniz',id:unizItem.id,price:35000,quantity:2})).json();
+  const lookup=await (await post('/api/orders/lookup',{tokens:[unizOrder.token,'0'.repeat(64)]})).json();
+  assert.equal(lookup.orders[0].quantity,2);
+  assert.equal(lookup.orders[0].amount,70000);
+  assert.equal(lookup.orders[1],null);
+  assert.equal((await fetch(base+'/products/capcut')).status,200);
+  const unizPayment={...paymentFor(unizOrder),transferAmount:70000};
   await Promise.all([deliver(unizPayment),deliver(unizPayment)]);
-  assert.deepEqual((await waitFor(unizOrder,'delivered')).delivery,['uniz | sample']);
+  assert.deepEqual((await waitFor(unizOrder,'delivered')).delivery,['uniz | sample 1','uniz | sample 2']);
   assert.equal(unizPurchases,1);
   const admin=await (await fetch(base+'/api/admin/state',{headers:auth})).json();
   assert.equal(admin.orders.find(o=>o.code===unizOrder.code).supplier_ref,'UZ-FIXTURE');
@@ -155,5 +161,5 @@ try {
   const catalog = await (await fetch(base+'/api/catalog')).json();
   assert(!catalog.products.some(p=>p.id===unizSku),'A provider switch to manual delivery hides the offer');
   assert(catalog.products.every(product=>!Object.hasOwn(product,'url')),'Storefront does not receive supplier URLs');
-  console.log('PASS: both suppliers, payment checks, wallet gating, encrypted delivery, read-only reconciliation, timeout and duplicate protection');
+  console.log('PASS: both suppliers, payment checks, wallet gating, multi-quantity, batch tracking, encrypted delivery, timeout and duplicate protection');
 } finally { await new Promise(resolve=>app.server.close(resolve)); app.db.close(); }

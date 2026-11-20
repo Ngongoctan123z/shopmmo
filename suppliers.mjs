@@ -41,18 +41,18 @@ async function readJson(response) {
   catch { return null; }
 }
 
-function melodyReceipt(receipt, delivery, sku, ref) {
+function melodyReceipt(receipt,delivery,sku,ref,quantity) {
   if (!ref || receipt?.status !== 'completed' || (receipt.plan_id ?? receipt.plan?.id) !== Number(sku) ||
-    receipt.quantity !== 1 || (receipt.payment_status && receipt.payment_status !== 'paid') ||
-    !Array.isArray(delivery?.items) || delivery.items.length !== 1 || !validItem(delivery.items[0]) ||
-    (delivery.delivered_count != null && delivery.delivered_count !== 1) ||
-    (delivery.expected_count != null && delivery.expected_count !== 1)) {
-    throw new SupplierError('MelodyApp chưa xác nhận đủ một tài khoản đã giao.',ref);
+    receipt.quantity !== quantity || (receipt.payment_status && receipt.payment_status !== 'paid') ||
+    !Array.isArray(delivery?.items) || delivery.items.length !== quantity || !delivery.items.every(validItem) ||
+    (delivery.delivered_count != null && delivery.delivered_count !== quantity) ||
+    (delivery.expected_count != null && delivery.expected_count !== quantity)) {
+    throw new SupplierError('MelodyApp chưa xác nhận đủ số tài khoản đã đặt.',ref);
   }
   return {ref, items:delivery.items, cost:money(receipt.final_amount)?receipt.final_amount:null};
 }
 
-function unizReceipt(result, sku, expectedRef = null) {
+function unizReceipt(result,sku,quantity,expectedRef=null) {
   const receipt = result?.order ?? result?.data?.order ?? result?.data ?? result;
   const ref = reference(receipt?.code ?? receipt?.orderCode ?? receipt?.order_code);
   const code = ref && /^UZ/i.test(ref) ? ref : null;
@@ -63,9 +63,9 @@ function unizReceipt(result, sku, expectedRef = null) {
   const completed = status == null || status === true || ['completed','delivered','success','paid'].includes(String(status).toLowerCase());
   if ((result?.success !== true && result?.status !== true) || !code || !completed ||
       (expectedRef && (code !== expectedRef || listedSku !== sku)) ||
-      (listedSku != null && listedSku !== sku) || (qty != null && qty !== 1) ||
-      !Array.isArray(items) || items.length !== 1 || !validItem(items[0])) {
-    throw new SupplierError('Uniz chưa trả mã đơn và một tài khoản giao hàng theo định dạng đã hỗ trợ.',expectedRef && expectedRef !== code ? null : code);
+      (listedSku != null && listedSku !== sku) || (qty != null && qty !== quantity) ||
+      !Array.isArray(items) || items.length !== quantity || !items.every(validItem)) {
+    throw new SupplierError('Uniz chưa trả mã đơn và đủ tài khoản giao hàng theo định dạng đã hỗ trợ.',expectedRef && expectedRef !== code ? null : code);
   }
   return {ref:code, items, cost:null};
 }
@@ -133,26 +133,26 @@ export function createSuppliers(env, fetcher) {
       ...snapshot,fresh:Boolean(snapshot?.ok && Date.now()-snapshot.checkedAt < walletTtl)};
   }
 
-  async function buy(source,sku) {
+  async function buy(source,sku,quantity) {
     if (!enabled(source)) throw new SupplierError('Nhập hàng API cho nguồn này đang tắt.');
-    if (source === 'uniz') return unizReceipt(await request(source,'/orders',{slug:sku,qty:1}),sku);
-    const result = await request(source,'/orders/create',{items:[{plan_id:Number(sku),quantity:1}]});
+    if (source === 'uniz') return unizReceipt(await request(source,'/orders',{slug:sku,qty:quantity}),sku,quantity);
+    const result = await request(source,'/orders/create',{items:[{plan_id:Number(sku),quantity}]});
     const orders = result.data?.orders;
     const receipt = Array.isArray(orders) && orders.length === 1 ? orders[0] : null;
     const ref = reference(receipt?.trans_id);
     if (result.success !== true || result.data?.summary?.partial_success === true || result.data?.failed_items?.length) {
       throw new SupplierError('MelodyApp chưa xác nhận đơn nhập hàng thành công.',ref);
     }
-    return melodyReceipt(receipt,receipt?.delivery,sku,ref);
+    return melodyReceipt(receipt,receipt?.delivery,sku,ref,quantity);
   }
 
-  async function lookup(source,sku,ref) {
+  async function lookup(source,sku,ref,quantity) {
     if (!reference(ref)) throw new SupplierError('Thiếu mã đơn chính xác của nhà cung cấp.');
-    if (source === 'uniz') return unizReceipt(await request(source,'/orders?code='+encodeURIComponent(ref)),sku,ref);
+    if (source === 'uniz') return unizReceipt(await request(source,'/orders?code='+encodeURIComponent(ref)),sku,quantity,ref);
     const result=await request(source,'/orders/status?trans_id='+encodeURIComponent(ref));
     const receipt=result.data?.order;
     if (result.success !== true || receipt?.trans_id !== ref) throw new SupplierError('MelodyApp không xác nhận đúng mã đơn.');
-    return melodyReceipt(receipt,result.data.delivery,sku,ref);
+    return melodyReceipt(receipt,result.data.delivery,sku,ref,quantity);
   }
   return {enabled,inspect,status,buy,lookup};
 }

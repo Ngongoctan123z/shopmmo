@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Xem thông tin gói, chọn số lượng và đặt hàng trên ShopMMO.">
+<title>Sản phẩm | ShopMMO</title>
+<link rel="stylesheet" href="/store.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham" aria-current="page">Sản phẩm</a><a href="/orders">Đơn hàng</a></nav></div></header>
+<main class="wrap">
+  <nav class="breadcrumbs" aria-label="Vị trí"><a href="/">Cửa hàng</a><span aria-hidden="true">/</span><span id="breadcrumb">Sản phẩm</span></nav>
+  <div id="product-error" class="panel empty" role="status">Đang tải sản phẩm…</div>
+  <div id="product-page" hidden>
+    <header class="product-head"><h1 id="product-title"></h1><p class="muted" id="product-subtitle"></p></header>
+    <div class="product-grid">
+      <div class="product-main">
+        <section class="panel" aria-labelledby="variants-title"><h2 id="variants-title">Chọn gói</h2><div class="options" id="variants"></div></section>
+        <section class="panel" aria-labelledby="details-title"><h2 id="details-title">Thông tin gói</h2><ul class="specs" id="details"></ul></section>
+        <section class="panel faq" aria-labelledby="faq-title">
+          <h2 id="faq-title">Câu hỏi thường gặp</h2>
+          <details><summary>Thanh toán ở đâu?</summary><p>Sau khi xác nhận đặt hàng, bạn thanh toán bằng VietQR trong mục Đơn hàng. Nếu thanh toán chưa mở, hãy đợi đến khi trang đơn hiển thị mã QR.</p></details>
+          <details><summary>Nhận tài khoản như thế nào?</summary><p>Khi ShopMMO xác nhận thanh toán và nhập hàng thành công, thông tin tài khoản xuất hiện trong mục Đơn hàng trên trình duyệt đã đặt.</p></details>
+          <details><summary>Nếu đơn cần đối soát thì sao?</summary><p>Theo dõi trạng thái trong mục Đơn hàng và giữ lại mã giao dịch ngân hàng để đối soát.</p></details>
+        </section>
+      </div>
+      <form class="panel purchase" id="purchase">
+        <h2>Đặt hàng</h2><p class="selection" id="selected-plan"></p>
+        <div class="line"><span>Đơn giá</span><strong id="unit-price"></strong></div>
+        <div class="line"><label for="quantity">Số lượng</label><div class="field"><button class="button secondary" id="less" type="button" aria-label="Giảm số lượng">−</button><input id="quantity" type="number" inputmode="numeric" min="1" required value="1"><button class="button secondary" id="more" type="button" aria-label="Tăng số lượng">+</button></div></div>
+        <div class="line total"><span id="total-label">Tổng tiền</span><strong id="total" aria-live="polite"></strong></div>
+        <button class="button primary" id="place-order" type="submit">Mua ngay</button>
+        <p class="postnote" id="purchase-note"></p><p class="status-msg" id="purchase-status" role="status"></p>
+      </form>
+    </div>
+    <section class="related" id="related-section" hidden><h2>Sản phẩm khác</h2><div id="related"></div></section>
+  </div>
+</main>
+<footer class="site-footer"><div class="wrap"><span>ShopMMO</span><a href="/orders">Theo dõi đơn hàng</a></div></footer>
+<script src="/product.js" defer></script>
+</body>
+</html>

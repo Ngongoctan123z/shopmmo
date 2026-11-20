@@ -32,6 +32,7 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     }
     if (!columns.includes('supplier_ref')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_ref TEXT');
     if (!columns.includes('payment_started')) db.exec('ALTER TABLE checkout_orders ADD COLUMN payment_started INTEGER');
+    if (!columns.includes('quantity')) db.exec('ALTER TABLE checkout_orders ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
     if (!columns.includes('supplier_cost')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_cost REAL');
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS checkout_supplier_ref ON checkout_orders(source,supplier_ref) WHERE supplier_ref IS NOT NULL');
     db.prepare("UPDATE checkout_orders SET state='review', detail=?, updated=? WHERE state='ordering' AND supplier_attempt_at IS NOT NULL")
@@ -52,11 +53,12 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
   const webhookSecret = env.GPMPAY_WEBHOOK_SECRET ?? '';
   const configured = Boolean(secret && /^\d{6}$/.test(bin) && /^[a-z0-9]{5,30}$/i.test(account) &&
     holder && webhookSecret.length >= 32);
-  const sellable = item => {
+  const maxQuantity = item => Math.min(10,Number.isInteger(item.stockCount)?Math.max(0,item.stockCount):1);
+  const sellable = (item,quantity=1) => {
     if (!configured || !item.eligible || !item.published || !Number.isSafeInteger(item.price) ||
-      item.price < Math.max(2000,item.referencePrice)) return false;
+      item.price < item.referencePrice || item.price*quantity < 2000 || quantity > maxQuantity(item)) return false;
     const wallet = suppliers.status(item.source);
-    return wallet.enabled && wallet.fresh && wallet.canWrite !== false && wallet.balance >= item.referencePrice;
+    return wallet.enabled && wallet.fresh && wallet.canWrite !== false && wallet.balance >= item.referencePrice*quantity;
   };
 
   function encrypt(items, code) {
@@ -82,14 +84,18 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     if (!item?.eligible || !item.published || !Number.isFinite(quote) || quote < 0 || quote !== input.price) {
       return [409,{message:'Gói đã đổi giá hoặc hết hàng. Hãy tải lại danh mục.'}];
     }
+    const quantity = input.quantity ?? 1;
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > maxQuantity(item)) {
+      return [400,{message:'Số lượng vượt giới hạn hoặc số gói có sẵn.'}];
+    }
     const code = randomInt(100_000_000_000,999_999_999_999);
     const token = randomBytes(32).toString('hex');
     const time = Date.now();
-    const paymentStarted = sellable(item)?time:null;
+    const paymentStarted = sellable(item,quantity)?time:null;
     const state = paymentStarted ? 'pending' : 'awaiting_payment';
     const name = [item.name,item.plan].filter(Boolean).join(' · ');
-    db.prepare('INSERT INTO checkout_orders(code,token_hash,source,sku,fingerprint,name,amount,state,payment_started,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run(code,hash(token),item.source,item.id,item.fingerprint,name,quote,state,paymentStarted,time,time);
+    db.prepare('INSERT INTO checkout_orders(code,token_hash,source,sku,fingerprint,name,amount,quantity,state,payment_started,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(code,hash(token),item.source,item.id,item.fingerprint,name,quote*quantity,quantity,state,paymentStarted,time,time);
     return [201,{code,token,state}];
   }
 
@@ -107,10 +113,10 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     if (!item?.eligible || !item.published || item.fingerprint !== order.fingerprint) {
       return [409,{message:'Gói đã thay đổi hoặc hết hàng. Hãy kiểm tra lại trong cửa hàng.'}];
     }
-    if (Number.isSafeInteger(item.price) && item.price !== order.amount) {
+    if (Number.isSafeInteger(item.price) && item.price*order.quantity !== order.amount) {
       return [409,{message:'Giá bán đã thay đổi. Hãy kiểm tra giá mới và đặt lại trong cửa hàng.'}];
     }
-    if (!sellable(item)) return [409,{message:'ShopMMO chưa thể nhận thanh toán cho đơn này. Vui lòng thử lại sau.'}];
+    if (!sellable(item,order.quantity)) return [409,{message:'ShopMMO chưa thể nhận thanh toán cho đơn này. Vui lòng thử lại sau.'}];
     const now = Date.now();
     db.prepare("UPDATE checkout_orders SET state='pending',payment_started=?,updated=? WHERE code=? AND state='awaiting_payment'")
       .run(now,now,order.code);
@@ -142,14 +148,15 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
       if (!(await sync(order.source)).ok) throw Error('Không đồng bộ được tồn kho từ nguồn.');
       const item = rows(order.source).products.find(row=>row.id===order.sku);
       if (!item || !item.eligible || !item.published || item.fingerprint !== order.fingerprint) throw Error('Gói không còn đủ điều kiện giao ngay.');
-      if (order.amount < item.referencePrice) throw Error('Giá vốn nguồn đã cao hơn số tiền đã thu.');
+      if (order.quantity > maxQuantity(item)) throw Error('Kho nguồn không đủ số lượng đã đặt.');
+      if (order.amount < item.referencePrice*order.quantity) throw Error('Giá vốn nguồn đã cao hơn số tiền đã thu.');
       const wallet = await suppliers.inspect(order.source);
       if (!wallet.ok) throw Error(wallet.message);
       if (wallet.canWrite === false) throw Error('Khóa API thiếu quyền tạo đơn.');
-      if (wallet.balance < item.referencePrice) throw Error('Ví nguồn không đủ tiền.');
+      if (wallet.balance < item.referencePrice*order.quantity) throw Error('Ví nguồn không đủ tiền.');
       db.prepare('UPDATE checkout_orders SET supplier_attempt_at=? WHERE code=?').run(Date.now(),order.code);
       upstreamStarted = true;
-      result = await suppliers.buy(order.source,order.sku);
+      result = await suppliers.buy(order.source,order.sku,order.quantity);
       deliver(order,result);
     } catch(error) {
       const detail = upstreamStarted ? error.message + ' Cần đối soát nguồn trước khi xử lý lại.' : error.message + ' Chưa gửi lệnh mua.';
@@ -178,7 +185,7 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
       return [409,{message:'Cần một đơn đang đối soát có mã nguồn do API trả về.'}];
     }
     try {
-      const result = await suppliers.lookup(order.source,order.sku,order.supplier_ref);
+      const result = await suppliers.lookup(order.source,order.sku,order.supplier_ref,order.quantity);
       return deliver(order,result) ? [200,{message:'Đã xác nhận và giao tài khoản từ đơn nguồn.'}] : [409,{message:'Trạng thái đơn đã thay đổi.'}];
     } catch(error) {
       return [502,{message:error.message}];
@@ -209,17 +216,17 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
   function status(token) {
     const order = findCustomerOrder(token);
     if (!order) return [404,{message:'Không tìm thấy đơn.'}];
-    const {code,name,amount}=order;
+    const {code,name,amount,quantity,created}=order;
     const expires = (order.payment_started ?? order.created)+expiration;
     const expired = order.state==='pending' && Date.now() > expires;
     const state = expired ? 'expired' : order.state;
     const payment = state==='pending' && configured ? {account,bin,holder,content:'SMMO'+code,expires} : null;
-    return [200,{code,name,amount,state,payment,delivery:state==='delivered' && secret ? decrypt(order):null}];
+    return [200,{code,name,amount,quantity,created,state,payment,delivery:state==='delivered' && secret ? decrypt(order):null}];
   }
 
   const resume = () => {
     for (const source of ['uniz','melody']) void processSource(source);
   };
-  const list = () => db.prepare('SELECT code,source,sku,name,amount,state,detail,payment_ref,supplier_ref,supplier_cost,supplier_attempt_at,created,updated FROM checkout_orders ORDER BY created DESC LIMIT 50').all();
-  return {create,startPayment,webhook,status,sellable,list,resume,reconcile,suppliers,configured};
+  const list = () => db.prepare('SELECT code,source,sku,name,amount,quantity,state,detail,payment_ref,supplier_ref,supplier_cost,supplier_attempt_at,created,updated FROM checkout_orders ORDER BY created DESC LIMIT 50').all();
+  return {create,startPayment,webhook,status,sellable,maxQuantity,list,resume,reconcile,suppliers,configured};
 }

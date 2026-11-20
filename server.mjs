@@ -42,7 +42,7 @@ function brandFor(source, id, name, slug, category) {
     (/\blam dep\b/.test(fold(category)) ? 'Làm đẹp' : null);
 }
 
-function offer(source,id,slug,name,plan,category,referencePrice,stock,instant,description='',hasFields=false,listingPrice=referencePrice) {
+function offer(source,id,slug,name,plan,category,referencePrice,stock,instant,description='',hasFields=false,listingPrice=referencePrice,stockCount=null,warrantyDays=null) {
   if (!slugOk(slug) || !name || !cents(referencePrice)) throw Error('Danh mục chứa gói sai định dạng.');
   const brand = brandFor(source,id,name,slug,category);
   const identity = [name,plan,slug].map(fold).join(' ').replace(/-/g,' ');
@@ -53,14 +53,15 @@ function offer(source,id,slug,name,plan,category,referencePrice,stock,instant,de
   else if (brand === 'Xingtu' && /\botp\b/i.test(description)) blocked = 'Đăng nhập cần OTP từ nhà cung cấp';
   else if (hasFields || manualSignals.test(fold(plan)) || instant === false) blocked = 'Gói cần xử lý hoặc cần thông tin bổ sung';
   const fingerprint = digest(JSON.stringify([slug,name,plan,category,description,instant,blocked])).toString('hex');
-  return {id,slug,name,plan,category,referencePrice,listingPrice,stock,instant,blocked,fingerprint,source};
+  return {id,slug,name,plan,category,referencePrice,listingPrice,stock,stockCount,warrantyDays,instant,blocked,fingerprint,source};
 }
 
-export function normalizeUniz(data, instantSlugs = new Set()) {
+export function normalizeUniz(data, instantSlugs = new Map()) {
   if (data?.success !== true || !Array.isArray(data.products) || data.total !== data.products.length) throw Error('Uniz trả danh mục không đầy đủ.');
   return data.products.map(row => {
     if (typeof row.inStock !== 'boolean') throw Error('Uniz trả trạng thái kho không hợp lệ.');
-    return offer('uniz', String(row.slug), row.slug, text(row.name), '', text(row.category), row.price, row.inStock, instantSlugs.has(row.slug));
+    return offer('uniz', String(row.slug), row.slug, text(row.name), '', text(row.category), row.price,row.inStock,instantSlugs.has(row.slug),'',false,row.price,instantSlugs.get(row.slug)??null,
+      Number.isInteger(row.warrantyDays) && row.warrantyDays>0 ? row.warrantyDays : null);
   });
 }
 
@@ -76,7 +77,7 @@ export function normalizeMelody(data) {
       return offer('melody', String(plan.id), product.slug, text(product.name), text(plan.name), category,
         plan.final_price, plan.in_stock && Number.isInteger(plan.stock_count) && plan.stock_count > 0,
         plan.is_instant, String(product.description ?? '').slice(0, 20_000) + ' ' + String(plan.description ?? '').slice(0, 20_000),
-        plan.fields.length > 0, cents(plan.price) ? plan.price : null);
+        plan.fields.length > 0,cents(plan.price)?plan.price:null,Number.isInteger(plan.stock_count)?plan.stock_count:null);
     });
   });
 }
@@ -115,12 +116,15 @@ async function liveUnizInstant(catalog,fetcher) {
       if (!heading || fold(heading[1]) !== fold(item.name)) return null;
       const details = body.slice(heading.index+heading[0].length,heading.index+heading[0].length+1300);
       const badge = /<span\b[^>]*>\s*(Có ngay|Giao hàng)\s*<\/span>/i.exec(details);
-      return badge?.[1] === 'Có ngay'?item.slug:null;
+      if (badge?.[1] !== 'Có ngay') return null;
+      const label = details.slice(badge.index+badge[0].length).split('</div>')[0];
+      const stock = /(?:Chỉ )?còn\s+(?:<!--\s*-->)?(\d+)/i.exec(label);
+      return [item.slug,stock ? Number(stock[1]) : null];
     } catch {
       return null;
     }
   }));
-  return new Set(checks.filter(Boolean));
+  return new Map(checks.filter(Boolean));
 }
 
 export function createApp(env = process.env, fetcher = fetch) {
@@ -154,7 +158,7 @@ export function createApp(env = process.env, fetcher = fetch) {
         source === 'melody' && item.id === '809' ? 'Gói hiện có yêu cầu số điện thoại chính chủ và chờ kích hoạt 5–10 phút' : item.blocked;
       return {...item, blocked, brand: scopedBrand ?? 'Ngoài phạm vi', price: review?.price ?? null,
         approved, published: Boolean(approved && review.published && !blocked),
-        eligible: !blocked && instant && item.stock && fresh,
+        eligible: !blocked && instant && item.stock && item.stockCount !== 0 && fresh,
         url: base[source] + item.slug};
     }) : [];
     return { updated: record?.updated ?? null, fresh, products };
@@ -212,6 +216,9 @@ export function createApp(env = process.env, fetcher = fetch) {
 
   const checkout = createCheckout({db,env,rows,sync,fetcher});
   const assets = new Map([
+    ['/product', ['text/html; charset=utf-8','product.html']],
+    ['/product.js', ['text/javascript; charset=utf-8','product.js']],
+    ['/store.css', ['text/css; charset=utf-8','store.css']],
     ['/orders', ['text/html; charset=utf-8','orders.html']],
     ['/orders.js', ['text/javascript; charset=utf-8','orders.js']],
     ['/', ['text/html; charset=utf-8', 'index.html']],
@@ -226,14 +233,14 @@ export function createApp(env = process.env, fetcher = fetch) {
     res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Cache-Control','no-store');
-    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src https://img.vietqr.io; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src https://img.vietqr.io; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     const json = (status,data) => {
       res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
       res.end(JSON.stringify(data));
     };
     try {
       const path = new URL(req.url,'http://localhost').pathname;
-      const asset = assets.get(path);
+      const asset = assets.get(/^\/products\/[a-z0-9-]{1,40}$/.test(path)?'/product':path);
       if (req.method === 'GET' && asset) {
         res.writeHead(200,{'Content-Type':asset[0]});
         return res.end(asset[1]);
@@ -242,11 +249,11 @@ export function createApp(env = process.env, fetcher = fetch) {
         const products = sources.flatMap(source=>rows(source).products)
           .filter(item=>item.eligible && item.published)
           .map(item=>({name:item.name,plan:item.plan,brand:item.brand,price:item.price,
-            source:item.source,id:item.id,
-            referencePrice:item.listingPrice??null}));
+            source:item.source,id:item.id,maxQuantity:checkout.maxQuantity(item),warrantyDays:item.warrantyDays??null,
+            paymentReady:checkout.sellable(item),referencePrice:item.listingPrice??null}));
         return json(200,{products});
       }
-      const publicPost = ['/api/checkout','/api/order/payment','/api/payments/gpmpay'].includes(path) && req.method === 'POST';
+      const publicPost = ['/api/checkout','/api/orders/lookup','/api/payments/gpmpay'].includes(path) && req.method === 'POST';
       const orderToken = req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
       if (req.method === 'GET' && path === '/api/order') return json(...checkout.status(orderToken));
       if (req.method === 'POST' && path === '/api/order/payment') return json(...checkout.startPayment(orderToken));
@@ -271,6 +278,17 @@ export function createApp(env = process.env, fetcher = fetch) {
       let input;
       const raw = Buffer.concat(chunks);
       try { input = JSON.parse(raw); } catch { return json(400,{message:'JSON không hợp lệ.'}); }
+      if (path === '/api/orders/lookup') {
+        const tokens = input?.tokens;
+        if (!Array.isArray(tokens) || tokens.length>10 || tokens.some(token=>typeof token!=='string' || !/^[a-f0-9]{64}$/.test(token))) {
+          return json(400,{message:'Danh sách mã truy cập đơn không hợp lệ.'});
+        }
+        const orders = tokens.map(token=>{
+          const [status,result] = checkout.status(token);
+          return status===200?result:null;
+        });
+        return json(200,{orders});
+      }
       if (path === '/api/checkout') return json(...checkout.create(input));
       if (path === '/api/payments/gpmpay') return json(...checkout.webhook(input,raw,req.headers['x-gpmpay-signature']));
       if (path === '/api/admin/order-reconcile') {

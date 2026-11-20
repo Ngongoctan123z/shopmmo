@@ -43,8 +43,8 @@ Khi triển khai công khai, đặt khóa nhà cung cấp bằng secret của m�
 - Trên GPM Pay, thêm webhook HTTPS mới cho ShopMMO tại /api/payments/gpmpay, chọn HMAC và cấu hình cùng một secret ngẫu nhiên dài ít nhất 32 ký tự trong GPMPAY_WEBHOOK_SECRET. Giữ nguyên webhook của VNDocs nếu đang dùng chung tài khoản.
 - DELIVERY_KEY là 32 byte ngẫu nhiên biểu diễn bằng đúng 64 ký tự hex. Sao lưu khóa riêng vì nó dùng để mã hóa tài khoản đã giao. Tạo khóa bằng node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))".
 - Bật MELODY_ORDER_ENABLED hoặc UNIZ_ORDER_ENABLED riêng theo nhà cung cấp khi đã xác nhận quyền tạo đơn, số dư ví và đối soát. MelodyApp cần quyền orders.create. Đặt giá bán từng SKU trong admin, tối thiểu 2.000 đ và không thấp hơn giá vốn API.
-- Một đơn mua một gói và có mã chuyển khoản riêng. Hệ thống chỉ xử lý cho tiền vào thật, đúng tài khoản, số tiền, mã đơn và thời hạn 30 phút. Webhook giả lập được bỏ qua. Xem các đơn lệch tiền hay lỗi nhập hàng trong bảng Đơn hàng ShopMMO. Các trường hợp nhập hàng chưa rõ kết quả cần kiểm tra bên nguồn trước khi xử lý lại. Trạng thái đối soát không tự hoàn tiền.
-- Sau khi đặt, khách được chuyển tới mục Đơn hàng trên ShopMMO để thanh toán, theo dõi và nhận nội dung trên cùng trình duyệt. Trình duyệt lưu mã truy cập đơn. Không chia sẻ trình duyệt dùng để nhận đơn trên máy công cộng.
+- Mỗi đơn chọn một phân loại và số lượng theo tồn kho, tối đa 10. Backend tính tổng theo đơn giá đã xác nhận. Mỗi đơn có mã chuyển khoản riêng. Hệ thống chỉ xử lý cho tiền vào thật, đúng tài khoản, số tiền, mã đơn và thời hạn 30 phút. Webhook giả lập được bỏ qua. Xem các đơn lệch tiền hay lỗi nhập hàng trong bảng Đơn hàng ShopMMO. Các trường hợp nhập hàng chưa rõ kết quả cần kiểm tra bên nguồn trước khi xử lý lại. Trạng thái đối soát không tự hoàn tiền.
+- Sau khi đặt, khách được chuyển tới mục Đơn hàng trên ShopMMO để thanh toán, theo dõi và nhận nội dung trên cùng trình duyệt. Trình duyệt lưu mã truy cập đơn. Trang Đơn hàng tra cứu tối đa 10 đơn mỗi lần cho một trang kết quả. Không chia sẻ trình duyệt dùng để nhận đơn trên máy công cộng.
 - Chạy kiểm thử không giao dịch thật bằng node checkout.test.mjs.
 
 Tài liệu: https://docs.gpmpay.com/webhook và https://docs.gpmpay.com/
@@ -55,3 +55,8 @@ Tài liệu: https://docs.gpmpay.com/webhook và https://docs.gpmpay.com/
 - Sau thanh toán, mỗi nguồn xử lý từng đơn một. Trước POST, backend kiểm tra lại SKU, tồn kho, giá vốn và ví. Nếu đã chuẩn bị gửi POST rồi mất phản hồi, đơn chuyển sang đối soát. Backend không tự gửi lại lệnh mua.
 - Nếu nhà cung cấp đã trả mã đơn, nút Đối soát nguồn dùng GET và kiểm tra mã đơn cùng SKU trước khi giao cho khách. MelodyApp dùng orders.status. Endpoint GET được Uniz mô tả trả HTTP 405 trong lần kiểm tra trực tiếp, nên còn cần nhà cung cấp xác nhận đường dẫn hoặc đối soát thủ công.
 - Kiểm thử tích hợp bằng node checkout.test.mjs dùng phản hồi giả cho cả hai nhà cung cấp. Có thể kiểm tra xác thực kết nối bằng nút Kiểm tra ví nguồn. POST đơn test lên nguồn thật chỉ dùng mã không tồn tại và số lượng 0. Kết quả từ chối xác nhận đường gọi và kiểm tra dữ liệu, không chứng minh định dạng giao hàng thành công.
+
+
+## Vận hành công khai
+
+Bản hiện tại dùng đơn khách vãng lai lưu trên trình duyệt. Cần tài khoản hoặc một kênh xác minh để khách tra lại trên thiết bị khác, cùng kênh hỗ trợ, quy trình bảo hành/hoàn tiền, webhook HTTPS và giám sát giao dịch. Nhằm mở rộng nhiều tiến trình phục vụ hoặc nhiều máy, cần tách tác vụ nhập hàng ra hàng đợi bền vững và dùng cơ sở dữ liệu chung. Kiểm thử tải, đặt giới hạn tốc độ và xác minh sao lưu/khôi phục trước khi mở bán rộng.
