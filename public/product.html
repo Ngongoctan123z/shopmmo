@@ -3,13 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
 <meta name="description" content="Xem thông tin gói, chọn số lượng và đặt hàng trên ShopMMO.">
 <title>Sản phẩm | ShopMMO</title>
 <link rel="stylesheet" href="/store.css">
 </head>
 <body>
-<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham" aria-current="page">Sản phẩm</a><a href="/orders">Đơn hàng</a></nav></div></header>
-<main class="wrap">
+<a class="skip" href="#main">Đến nội dung chính</a>
+<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham" aria-current="page">Sản phẩm</a><a href="/orders">Đơn hàng</a><a href="/account">Tài khoản</a></nav></div></header>
+<main class="wrap" id="main">
   <nav class="breadcrumbs" aria-label="Vị trí"><a href="/">Cửa hàng</a><span aria-hidden="true">/</span><span id="breadcrumb">Sản phẩm</span></nav>
   <div id="product-error" class="panel empty" role="status">Đang tải sản phẩm…</div>
   <div id="product-page" hidden>
@@ -28,7 +30,7 @@
       <form class="panel purchase" id="purchase">
         <h2>Đặt hàng</h2><p class="selection" id="selected-plan"></p>
         <div class="line"><span>Đơn giá</span><strong id="unit-price"></strong></div>
-        <div class="line"><label for="quantity">Số lượng</label><div class="field"><button class="button secondary" id="less" type="button" aria-label="Giảm số lượng">−</button><input id="quantity" type="number" inputmode="numeric" min="1" required value="1"><button class="button secondary" id="more" type="button" aria-label="Tăng số lượng">+</button></div></div>
+        <div class="line"><label for="quantity">Số lượng</label><div class="field"><button class="button secondary" id="less" type="button" aria-label="Giảm số lượng">−</button><input id="quantity" name="quantity" autocomplete="off" type="number" inputmode="numeric" min="1" required value="1"><button class="button secondary" id="more" type="button" aria-label="Tăng số lượng">+</button></div></div>
         <div class="line total"><span id="total-label">Tổng tiền</span><strong id="total" aria-live="polite"></strong></div>
         <button class="button primary" id="place-order" type="submit">Mua ngay</button>
         <p class="postnote" id="purchase-note"></p><p class="status-msg" id="purchase-status" role="status"></p>

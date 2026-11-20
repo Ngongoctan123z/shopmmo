@@ -7,26 +7,43 @@ const labels={awaiting_payment:'Chờ mở thanh toán',pending:'Chờ chuyển 
 const notes={awaiting_payment:'Đơn đã được lưu. Chỉ chuyển tiền khi trang này hiển thị VietQR.',paid:'ShopMMO đã nhận tiền và sẽ xử lý đơn.',
   ordering:'ShopMMO đang nhập tài khoản. Trang tự cập nhật khi giao xong.',expired:'Mã chuyển khoản đã hết hạn. Hãy đặt đơn mới nếu bạn vẫn muốn mua.',
   review:'Đơn đang được đối soát. Hãy giữ lại mã giao dịch ngân hàng.',unavailable:'Hãy tải lại trang để kiểm tra trạng thái.'};
-let saved=[];
-try{
-  const list=JSON.parse(localStorage.getItem('shopmmo-orders')||'[]');
-  if(Array.isArray(list))saved=list.filter(item=>item&&/^[a-f0-9]{64}$/.test(item.token));
-}catch{}
-const pageSize=10;
-let page=0, timer, requestNumber=0;
-function makeCard(order,entry){
-  const card=node('article',null,'panel order-card');
+const requestHeaders={'Content-Type':'application/json','X-ShopMMO-Request':'storefront'};
+const params=new URLSearchParams(location.search);
+const highlighted=Number(params.get('don'));
+const requestedPage=Number(params.get('trang')??0);
+let page=Number.isInteger(requestedPage)&&requestedPage>=0&&requestedPage<100000?requestedPage:0;
+let timer, requestNumber=0;
+async function importLegacyOrders(){
+  try{
+    const raw=JSON.parse(localStorage.getItem('shopmmo-orders')||'[]');
+    if(!Array.isArray(raw))return;
+    const entries=raw.filter(item=>item&&typeof item.token==='string'&&/^[a-f0-9]{64}$/.test(item.token));
+    const imported=new Set();
+    for(let start=0;start<entries.length;start+=10){
+      const response=await fetch('/api/orders/import',{method:'POST',headers:requestHeaders,
+        body:JSON.stringify({tokens:entries.slice(start,start+10).map(item=>item.token)})});
+      if(!response.ok)break;
+      for(const token of (await response.json()).imported)imported.add(token);
+    }
+    const remaining=entries.filter(item=>!imported.has(item.token));
+    if(remaining.length)localStorage.setItem('shopmmo-orders',JSON.stringify(remaining));
+    else localStorage.removeItem('shopmmo-orders');
+  }catch{}
+}
+function makeCard(order){
+  const card=node('article',null,'panel order-card'+(order.code===highlighted?' highlight':''));
   const title=node('div');
-  title.append(node('span','#'+entry.code,'muted'),node('h2',order.name||'Đơn hàng'));
+  title.append(node('span','#'+order.code,'muted'),node('h2',order.name||'Đơn hàng'));
   const top=node('div',null,'order-top');
-  top.append(title,node('span',labels[order.state]||'Đang cập nhật','order-state'));
+  const waiting=order.state==='awaiting_payment'?' waiting':'';
+  top.append(title,node('span',labels[order.state]||'Đang cập nhật','order-state'+waiting));
   const row=[];
   if(order.quantity)row.push('Số lượng '+order.quantity);
   if(Number.isFinite(order.amount))row.push((order.state==='awaiting_payment'?'Tổng tham khảo ':'Tổng tiền ')+currency.format(order.amount));
   if(order.created)row.push(new Date(order.created).toLocaleString('vi-VN'));
   card.append(top);
   if(row.length)card.append(node('p',row.join(' · '),'order-meta'));
-  if(notes[order.state])card.append(node('p',notes[order.state],'order-desc'));
+  if(notes[order.state])card.append(node('p',notes[order.state],'order-desc'+waiting));
   if(order.state==='awaiting_payment'){
     const check=node('button','Kiểm tra thanh toán','button secondary');
     check.type='button';
@@ -34,13 +51,14 @@ function makeCard(order,entry){
     check.addEventListener('click',async()=>{
       check.disabled=true;
       try{
-        const response=await fetch('/api/order/payment',{method:'POST',headers:{Authorization:'Bearer '+entry.token}});
+        const response=await fetch('/api/order/payment',{method:'POST',headers:requestHeaders,body:JSON.stringify({code:order.code})});
         const result=await response.json();
         if(!response.ok)throw Error(result.message);
         await render();
       }catch(error){message.textContent=error.message;check.disabled=false;}
     });
-    card.append(check,message);
+    const actions=node('div',null,'order-actions');actions.append(check);
+    card.append(actions,message);
   }
   if(order.payment){
     const payment=order.payment;
@@ -48,7 +66,7 @@ function makeCard(order,entry){
     const qr=node('img');
     const url=new URL('https://img.vietqr.io/image/'+payment.bin+'-'+payment.account+'-compact2.png');
     url.search = new URLSearchParams({amount:order.amount,addInfo:payment.content,accountName:payment.holder});
-    qr.alt='Mã VietQR của đơn hàng';qr.src=url.href;
+    qr.alt='Mã VietQR của đơn hàng';qr.width=200;qr.height=250;qr.loading='lazy';qr.src=url.href;
     const info=node('div');
     info.append(node('h3','Thanh toán VietQR'),node('p','Tài khoản nhận '+payment.account),
       node('p','Chủ tài khoản '+payment.holder),node('p','Nội dung chuyển khoản '+payment.content),
@@ -67,24 +85,34 @@ function makeCard(order,entry){
 async function render(){
   clearTimeout(timer);
   const current=++requestNumber;
-  if(!saved.length){root.replaceChildren(node('p','Chưa có đơn hàng trên trình duyệt này.','panel empty'));return;}
-  const entries=saved.slice(page*pageSize,(page+1)*pageSize);
-  let orders;
+  let result;
   try {
-    const response=await fetch('/api/orders/lookup',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({tokens:entries.map(item=>item.token)})});
+    const response=await fetch('/api/orders?page='+page);
     if(!response.ok)throw Error();
-    orders=(await response.json()).orders;
-  }catch{orders=[];}
+    result=await response.json();
+  }catch{
+    if(current===requestNumber)root.replaceChildren(node('p','Chưa tải được đơn hàng. Hãy tải lại trang.','panel empty'));
+    return;
+  }
   if(current!==requestNumber)return;
-  root.replaceChildren(...entries.map((entry,index)=>makeCard(orders[index]??{state:'unavailable'},entry)));
-  const total=Math.ceil(saved.length/pageSize);
+  page=result.page;
+  const orders=result.orders;
+  root.replaceChildren(...(orders.length?orders.map(makeCard):[node('p','Chưa có đơn hàng trong phiên này.','panel empty')]));
+  const total=Math.ceil(result.total/10);
   byId('order-pagination').hidden=total<=1;
   byId('page-number').textContent='Trang '+(page+1)+' / '+total;
   byId('newer').disabled=page===0;
   byId('older').disabled=page+1>=total;
-  if(orders.some(item=>item&&['pending','paid','ordering'].includes(item.state)))timer=setTimeout(render,8000);
+  if(orders.some(item=>['pending','paid','ordering'].includes(item.state)))timer=setTimeout(render,8000);
 }
-byId('older').addEventListener('click',()=>{page++;void render();});
-byId('newer').addEventListener('click',()=>{page--;void render();});
-void render();
+function goPage(change){
+  page+=change;
+  const next=new URL(location.href);
+  if(page>0)next.searchParams.set('trang',String(page));
+  else next.searchParams.delete('trang');
+  history.replaceState(null,'',next);
+  void render();
+}
+byId('older').addEventListener('click',()=>goPage(1));
+byId('newer').addEventListener('click',()=>goPage(-1));
+void importLegacyOrders().then(render);

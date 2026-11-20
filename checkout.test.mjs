@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createApp } from './server.mjs';
 const token='0123456789abcdef'.repeat(4);
@@ -55,20 +55,44 @@ function signature(data,time=Math.floor(Date.now()/1000)){
   return 't='+time+',v1='+createHmac('sha256',env.GPMPAY_WEBHOOK_SECRET).update(time+'.'+JSON.stringify(data)).digest('hex');
 }
 const auth={Authorization:'Bearer '+token};
+const storefront={'X-ShopMMO-Request':'storefront'};
+const jar={};
+function captureCookies(response,storage=jar){
+  for(const value of response.headers.getSetCookie()){
+    const [nameValue]=value.split(';');
+    const index=nameValue.indexOf('=');
+    storage[nameValue.slice(0,index)]=nameValue.slice(index+1);
+  }
+}
+function withCookies(storage=jar){
+  return {...storefront,Cookie:Object.entries(storage).map(([k,v])=>k+'='+v).join('; ')};
+}
+const list = (storage=jar)=>fetch(base+'/api/orders',{headers:withCookies(storage)}).then(r=>r.json());
+const status = async entry=>(await list()).orders.find(o=>o.code===entry.code);
+async function checkout(data){
+  const response=await post('/api/checkout',data,withCookies());
+  captureCookies(response);
+  return response;
+}
 try {
   assert.equal((await app.sync('melody')).ok,true);
   assert.equal((await post('/api/admin/supplier-check',{source:'melody'},auth)).status,200);
   const state=await (await fetch(base+'/api/admin/state',{headers:auth})).json();
   const item=state.sources.find(s=>s.source==='melody').products[0];
   assert.equal((await post('/api/admin/review',{source:'melody',id:item.id,fingerprint:item.fingerprint,brand:'Meitu',price:35000,published:true,confirmed:true},auth)).status,200);
-  assert.equal((await post('/api/checkout',{source:'melody',id:item.id,price:1})).status,409);
+  assert.equal((await checkout({source:'melody',id:item.id,price:1})).status,409);
+  assert.equal((await post('/api/checkout',{source:'melody',id:item.id,price:35000})).status,403);
+  assert.equal((await post('/api/checkout',{source:'melody',id:item.id,price:35000},
+    {...storefront,'Sec-Fetch-Site':'cross-site'})).status,403);
   const create=async()=>{
-    const response=await post('/api/checkout',{source:'melody',id:item.id,price:35000});
+    const response=await checkout({source:'melody',id:item.id,price:35000});
     assert.equal(response.status,201);
     return response.json();
   };
   const order=await create();
-  const status=entry=>fetch(base+'/api/order',{headers:{Authorization:'Bearer '+entry.token}}).then(r=>r.json());
+  assert(!Object.hasOwn(order,'token'));
+  assert(jar.shopmmo_guest);
+  assert.deepEqual((await list({})).orders,[]);
   const event={id:randomUUID(),source:'REAL',transferType:'in',accountNumber:env.GPMPAY_ACCOUNT_NUMBER,
     transferAmount:35000,content:'Thanh toan SMMO'+order.code,transactionDate:new Date().toISOString()};
   const deliver=(data, sig=signature(data))=>post('/api/payments/gpmpay',data,{'x-gpmpay-signature':sig});
@@ -111,9 +135,9 @@ try {
   const deferredPayment=paymentFor(deferred);
   await deliver(deferredPayment);
   assert.equal(purchases,1,'A saved order is not payable yet');
-  const startPayment=entry=>fetch(base+'/api/order/payment',{method:'POST',headers:{Authorization:'Bearer '+entry.token}});
+  const startPayment=entry=>post('/api/order/payment',{code:entry.code},withCookies());
   assert.equal((await startPayment(deferred)).status,409);
-  assert.equal((await fetch(base+'/api/order/payment',{method:'POST'})).status,404);
+  assert.equal((await post('/api/order/payment',{code:deferred.code},storefront)).status,404);
   balance=100000;
   await app.checkout.suppliers.inspect('melody');
   app.db.prepare('UPDATE checkout_orders SET created=? WHERE code=?').run(Date.now()-60*60_000,deferred.code);
@@ -142,12 +166,11 @@ try {
   const unizItem=unizState.sources.find(s=>s.source==='uniz').products[0];
   assert.equal((await post('/api/admin/review',{source:'uniz',id:unizItem.id,fingerprint:unizItem.fingerprint,brand:'CapCut',price:35000,
     published:true,confirmed:true},auth)).status,200);
-  assert.equal((await post('/api/checkout',{source:'uniz',id:unizItem.id,price:35000,quantity:5})).status,400);
-  const unizOrder=await (await post('/api/checkout',{source:'uniz',id:unizItem.id,price:35000,quantity:2})).json();
-  const lookup=await (await post('/api/orders/lookup',{tokens:[unizOrder.token,'0'.repeat(64)]})).json();
-  assert.equal(lookup.orders[0].quantity,2);
-  assert.equal(lookup.orders[0].amount,70000);
-  assert.equal(lookup.orders[1],null);
+  assert.equal((await checkout({source:'uniz',id:unizItem.id,price:35000,quantity:5})).status,400);
+  const unizOrder=await (await checkout({source:'uniz',id:unizItem.id,price:35000,quantity:2})).json();
+  const unizView=await status(unizOrder);
+  assert.equal(unizView.quantity,2);
+  assert.equal(unizView.amount,70000);
   assert.equal((await fetch(base+'/products/capcut')).status,200);
   const unizPayment={...paymentFor(unizOrder),transferAmount:70000};
   await Promise.all([deliver(unizPayment),deliver(unizPayment)]);
@@ -161,5 +184,33 @@ try {
   const catalog = await (await fetch(base+'/api/catalog')).json();
   assert(!catalog.products.some(p=>p.id===unizSku),'A provider switch to manual delivery hides the offer');
   assert(catalog.products.every(product=>!Object.hasOwn(product,'url')),'Storefront does not receive supplier URLs');
-  console.log('PASS: both suppliers, payment checks, wallet gating, multi-quantity, batch tracking, encrypted delivery, timeout and duplicate protection');
+  const guestCookie={...jar};
+  const credential={email:'checkout-fixture@example.test',password:'fixture-password-99'};
+  const registration=await post('/api/account/register',credential,withCookies());
+  assert.equal(registration.status,201);
+  const cookies=registration.headers.getSetCookie();
+  assert(cookies.some(cookie=>cookie.startsWith('shopmmo_account=')&&cookie.includes('HttpOnly')&&cookie.includes('SameSite=Strict')));
+  captureCookies(registration);
+  assert.equal((await list(guestCookie)).total,0);
+  assert((await status(order)).delivery.length);
+  const secondDevice={};
+  const login=await post('/api/account/login',credential,storefront);
+  assert.equal(login.status,200);
+  captureCookies(login,secondDevice);
+  assert((await list(secondDevice)).orders.some(value=>value.code===order.code));
+  const wrong=await post('/api/account/login',{...credential,password:'fixture-password-incorrect'},storefront);
+  assert.equal(wrong.status,401);
+  const legacy='fa'.repeat(32);
+  const hashed=createHash('sha256').update(legacy).digest('hex');
+  app.db.prepare('UPDATE checkout_orders SET customer_id=NULL,owner_hash=NULL,token_hash=? WHERE code=?').run(hashed,deferred.code);
+  assert.equal((await fetch(base+'/api/order',{headers:{Authorization:'Bearer '+legacy}})).status,200);
+  const imported=await (await post('/api/orders/import',{tokens:[legacy]},withCookies())).json();
+  assert.deepEqual(imported.imported,[legacy]);
+  assert.equal((await fetch(base+'/api/order',{headers:{Authorization:'Bearer '+legacy}})).status,404);
+  assert.equal((await status(deferred)).code,deferred.code);
+  const logout=await post('/api/account/logout',{},withCookies(secondDevice));
+  assert.equal(logout.status,200);
+  assert.equal((await list(secondDevice)).total,0);
+  assert(!JSON.stringify(app.db.prepare('SELECT password_hash FROM customers').get()).includes(credential.password));
+  console.log('PASS: both suppliers, payment checks, wallet gating, multi-quantity, guest cookie, account ownership, multi-device order access, legacy migration and encrypted delivery');
 } finally { await new Promise(resolve=>app.server.close(resolve)); app.db.close(); }

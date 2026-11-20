@@ -32,8 +32,12 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     }
     if (!columns.includes('supplier_ref')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_ref TEXT');
     if (!columns.includes('payment_started')) db.exec('ALTER TABLE checkout_orders ADD COLUMN payment_started INTEGER');
+    if (!columns.includes('customer_id')) db.exec('ALTER TABLE checkout_orders ADD COLUMN customer_id INTEGER REFERENCES customers(id)');
+    if (!columns.includes('owner_hash')) db.exec('ALTER TABLE checkout_orders ADD COLUMN owner_hash TEXT');
     if (!columns.includes('quantity')) db.exec('ALTER TABLE checkout_orders ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
     if (!columns.includes('supplier_cost')) db.exec('ALTER TABLE checkout_orders ADD COLUMN supplier_cost REAL');
+    db.exec('CREATE INDEX IF NOT EXISTS checkout_customer_created ON checkout_orders(customer_id,created DESC,code DESC)');
+    db.exec('CREATE INDEX IF NOT EXISTS checkout_owner_created ON checkout_orders(owner_hash,created DESC,code DESC)');
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS checkout_supplier_ref ON checkout_orders(source,supplier_ref) WHERE supplier_ref IS NOT NULL');
     db.prepare("UPDATE checkout_orders SET state='review', detail=?, updated=? WHERE state='ordering' AND supplier_attempt_at IS NOT NULL")
       .run('Tiến trình bị ngắt sau khi chuẩn bị gửi lệnh mua. Cần đối soát với nguồn.',Date.now());
@@ -77,7 +81,13 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     return JSON.parse(Buffer.concat([cipher.update(blob.subarray(28)),cipher.final()]));
   }
 
-  function create(input) {
+  function ownerScope(session,customer){
+    if(customer) return {field:'customer_id',key:customer.id};
+    if(session) return {field:'owner_hash',key:hash(session)};
+    return null;
+  }
+
+  function create(input,session,customer) {
     if (!['uniz','melody'].includes(input?.source) || typeof input.id !== 'string') return [400,{message:'Gói không hợp lệ.'}];
     const item = rows(input.source).products.find(row=>row.id===input.id);
     const quote = item?.price ?? item?.listingPrice;
@@ -89,23 +99,28 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
       return [400,{message:'Số lượng vượt giới hạn hoặc số gói có sẵn.'}];
     }
     const code = randomInt(100_000_000_000,999_999_999_999);
+    const scope = ownerScope(session,customer);
     const token = randomBytes(32).toString('hex');
     const time = Date.now();
+    const recent = db.prepare('SELECT COUNT(*) AS n FROM checkout_orders WHERE '+scope.field+'=? AND created>?').get(scope.key,time-60_000).n;
+    if (recent>=12) return [429,{message:'Bạn đang đặt nhiều đơn. Hãy đợi một phút rồi thử lại.'}];
     const paymentStarted = sellable(item,quantity)?time:null;
     const state = paymentStarted ? 'pending' : 'awaiting_payment';
     const name = [item.name,item.plan].filter(Boolean).join(' · ');
-    db.prepare('INSERT INTO checkout_orders(code,token_hash,source,sku,fingerprint,name,amount,quantity,state,payment_started,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(code,hash(token),item.source,item.id,item.fingerprint,name,quote*quantity,quantity,state,paymentStarted,time,time);
-    return [201,{code,token,state}];
+    db.prepare('INSERT INTO checkout_orders(code,token_hash,owner_hash,customer_id,source,sku,fingerprint,name,amount,quantity,state,payment_started,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(code,hash(token),customer?null:scope.key,customer?.id??null,item.source,item.id,item.fingerprint,name,quote*quantity,quantity,state,paymentStarted,time,time);
+    return [201,{code,state}];
   }
 
-  function findCustomerOrder(token) {
+  function findCustomerOrder({token,session,customer,code}) {
+    const scope = ownerScope(session,customer);
+    if (scope && Number.isSafeInteger(code)) return db.prepare('SELECT * FROM checkout_orders WHERE code=? AND '+scope.field+'=?').get(code,scope.key);
     if (!/^[0-9a-f]{64}$/.test(token ?? '')) return null;
-    return db.prepare('SELECT * FROM checkout_orders WHERE token_hash=?').get(hash(token));
+    return db.prepare('SELECT * FROM checkout_orders WHERE token_hash=? AND owner_hash IS NULL AND customer_id IS NULL').get(hash(token));
   }
 
-  function startPayment(token) {
-    const order = findCustomerOrder(token);
+  function startPayment(access) {
+    const order = findCustomerOrder(access);
     if (!order) return [404,{message:'Không tìm thấy đơn.'}];
     if (order.state === 'pending') return [200,{state:'pending'}];
     if (order.state !== 'awaiting_payment') return [409,{message:'Đơn này không thể mở thanh toán.'}];
@@ -213,20 +228,58 @@ export function createCheckout({db, env, rows, sync, fetcher}) {
     return [200,{ok:true}];
   }
 
-  function status(token) {
-    const order = findCustomerOrder(token);
-    if (!order) return [404,{message:'Không tìm thấy đơn.'}];
+  function orderView(order) {
     const {code,name,amount,quantity,created}=order;
     const expires = (order.payment_started ?? order.created)+expiration;
     const expired = order.state==='pending' && Date.now() > expires;
     const state = expired ? 'expired' : order.state;
     const payment = state==='pending' && configured ? {account,bin,holder,content:'SMMO'+code,expires} : null;
-    return [200,{code,name,amount,quantity,created,state,payment,delivery:state==='delivered' && secret ? decrypt(order):null}];
+    return {code,name,amount,quantity,created,state,payment,delivery:state==='delivered' && secret ? decrypt(order):null};
+  }
+
+  function status(token) {
+    const order = findCustomerOrder({token});
+    return order?[200,orderView(order)]:[404,{message:'Không tìm thấy đơn.'}];
+  }
+
+  function customerOrders(session,page,customer) {
+    const scope = ownerScope(session,customer);
+    if (!scope) return {orders:[],total:0,page:0};
+    const total = db.prepare('SELECT COUNT(*) AS n FROM checkout_orders WHERE '+scope.field+'=?').get(scope.key).n;
+    const activePage = Math.min(page,Math.max(0,Math.ceil(total/10)-1));
+    const orders = db.prepare('SELECT * FROM checkout_orders WHERE '+scope.field+'=? ORDER BY created DESC,code DESC LIMIT 10 OFFSET ?')
+      .all(scope.key,activePage*10).map(orderView);
+    return {orders,total,page:activePage};
+  }
+
+  function claimGuestOrders(session,customer){
+    if (!session || !customer) return;
+    db.prepare('UPDATE checkout_orders SET customer_id=?,owner_hash=NULL WHERE owner_hash=? AND customer_id IS NULL')
+      .run(customer.id,hash(session));
+  }
+
+  function importOrders(session,tokens,customer) {
+    const scope = ownerScope(session,customer);
+    const claim = db.prepare('UPDATE checkout_orders SET '+scope.field+'=? WHERE token_hash=? AND owner_hash IS NULL AND customer_id IS NULL');
+    const owned = db.prepare('SELECT 1 FROM checkout_orders WHERE token_hash=? AND '+scope.field+'=?');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const imported = [];
+      for (const token of tokens) {
+        const key=hash(token);
+        if (claim.run(scope.key,key).changes || owned.get(key,scope.key)) imported.push(token);
+      }
+      db.exec('COMMIT');
+      return imported;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   const resume = () => {
     for (const source of ['uniz','melody']) void processSource(source);
   };
   const list = () => db.prepare('SELECT code,source,sku,name,amount,quantity,state,detail,payment_ref,supplier_ref,supplier_cost,supplier_attempt_at,created,updated FROM checkout_orders ORDER BY created DESC LIMIT 50').all();
-  return {create,startPayment,webhook,status,sellable,maxQuantity,list,resume,reconcile,suppliers,configured};
+  return {create,startPayment,customerOrders,claimGuestOrders,importOrders,webhook,status,sellable,maxQuantity,list,resume,reconcile,suppliers,configured};
 }

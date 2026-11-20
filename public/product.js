@@ -28,10 +28,10 @@ function choose(item){
   byId('total-label').textContent=item.price===null?'Tổng tham khảo':'Tổng tiền';
   byId('purchase-note').textContent=item.paymentReady?'Xác nhận đặt hàng để xem hướng dẫn VietQR và trạng thái đơn.':'Đơn được lưu trên ShopMMO. Mã QR sẽ xuất hiện khi thanh toán được mở.';
   status.textContent='';
-  const facts=['Gói '+planLabel(item),'Hình thức giao: tài khoản số trong mục Đơn hàng.'];
-  if(item.warrantyDays)facts.push('Thời hạn bảo hành theo gói: '+item.warrantyDays+' ngày.');
+  const facts=[];
   if(item.id==='capcut-pro-ca-nhan-1-thang-bhf')facts.push('Gói cá nhân dùng trên một điện thoại và một máy tính. Sử dụng trên hai điện thoại có thể bị giới hạn đăng nhập.');
   if(item.id==='admin-canva-pro-business-100-slot-1-thang-bhf-052693')facts.push('Gói quản trị Canva Business. Có thể thêm tối đa 100 thành viên theo điều kiện của gói.');
+  facts.push('Nhận tài khoản trong mục Đơn hàng.');
   byId('details').replaceChildren(...facts.map(fact=>node('li',fact)));
   updateTotal();
 }
@@ -46,14 +46,11 @@ byId('purchase').addEventListener('submit',async event=>{
   updateTotal();
   status.textContent='Đang tạo đơn ShopMMO…';
   try{
-    const raw=JSON.parse(localStorage.getItem('shopmmo-orders')||'[]');
-    const saved=Array.isArray(raw)?raw:[];
-    const response=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json'},
+    const response=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json','X-ShopMMO-Request':'storefront'},
       body:JSON.stringify({source:selected.source,id:selected.id,price:unit(selected),quantity})});
     const data=await response.json();
     if(!response.ok)throw Error(data.message);
-    localStorage.setItem('shopmmo-orders',JSON.stringify([{code:data.code,token:data.token},...saved]));
-    location.assign('/orders');
+    location.assign('/orders?don='+encodeURIComponent(data.code));
   }catch(error){
     busy=false;
     updateTotal();

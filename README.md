@@ -44,7 +44,7 @@ Khi triển khai công khai, đặt khóa nhà cung cấp bằng secret của m�
 - DELIVERY_KEY là 32 byte ngẫu nhiên biểu diễn bằng đúng 64 ký tự hex. Sao lưu khóa riêng vì nó dùng để mã hóa tài khoản đã giao. Tạo khóa bằng node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))".
 - Bật MELODY_ORDER_ENABLED hoặc UNIZ_ORDER_ENABLED riêng theo nhà cung cấp khi đã xác nhận quyền tạo đơn, số dư ví và đối soát. MelodyApp cần quyền orders.create. Đặt giá bán từng SKU trong admin, tối thiểu 2.000 đ và không thấp hơn giá vốn API.
 - Mỗi đơn chọn một phân loại và số lượng theo tồn kho, tối đa 10. Backend tính tổng theo đơn giá đã xác nhận. Mỗi đơn có mã chuyển khoản riêng. Hệ thống chỉ xử lý cho tiền vào thật, đúng tài khoản, số tiền, mã đơn và thời hạn 30 phút. Webhook giả lập được bỏ qua. Xem các đơn lệch tiền hay lỗi nhập hàng trong bảng Đơn hàng ShopMMO. Các trường hợp nhập hàng chưa rõ kết quả cần kiểm tra bên nguồn trước khi xử lý lại. Trạng thái đối soát không tự hoàn tiền.
-- Sau khi đặt, khách được chuyển tới mục Đơn hàng trên ShopMMO để thanh toán, theo dõi và nhận nội dung trên cùng trình duyệt. Trình duyệt lưu mã truy cập đơn. Trang Đơn hàng tra cứu tối đa 10 đơn mỗi lần cho một trang kết quả. Không chia sẻ trình duyệt dùng để nhận đơn trên máy công cộng.
+- Sau khi đặt, khách được chuyển tới mục Đơn hàng trên ShopMMO để thanh toán, theo dõi và nhận nội dung trên cùng trình duyệt. Mỗi trang lấy tối đa 10 đơn. Khách chưa đăng nhập dùng phiên riêng trong trình duyệt; khi đăng ký hoặc đăng nhập, đơn khách trên trình duyệt sẽ được gắn vào tài khoản.
 - Chạy kiểm thử không giao dịch thật bằng node checkout.test.mjs.
 
 Tài liệu: https://docs.gpmpay.com/webhook và https://docs.gpmpay.com/
@@ -59,4 +59,10 @@ Tài liệu: https://docs.gpmpay.com/webhook và https://docs.gpmpay.com/
 
 ## Vận hành công khai
 
-Bản hiện tại dùng đơn khách vãng lai lưu trên trình duyệt. Cần tài khoản hoặc một kênh xác minh để khách tra lại trên thiết bị khác, cùng kênh hỗ trợ, quy trình bảo hành/hoàn tiền, webhook HTTPS và giám sát giao dịch. Nhằm mở rộng nhiều tiến trình phục vụ hoặc nhiều máy, cần tách tác vụ nhập hàng ra hàng đợi bền vững và dùng cơ sở dữ liệu chung. Kiểm thử tải, đặt giới hạn tốc độ và xác minh sao lưu/khôi phục trước khi mở bán rộng.
+Khách có thể đăng nhập để tra đơn trên thiết bị khác. Khi mở bán công khai cần xác minh email, khôi phục tài khoản, kênh hỗ trợ, quy trình bảo hành và hoàn tiền, webhook HTTPS và giám sát giao dịch. Nhằm mở rộng nhiều tiến trình phục vụ hoặc nhiều máy, cần tách tác vụ nhập hàng ra hàng đợi bền vững và dùng cơ sở dữ liệu chung. Kiểm thử tải, đặt giới hạn tốc độ và xác minh sao lưu/khôi phục trước khi mở bán rộng.
+
+## Tài khoản và lưu trữ
+
+SQLite mặc định ở shopmmo.sqlite hoặc đường dẫn SHOPMMO_DB. Bảng customers giữ email, salt và bản băm scrypt; customer_sessions giữ bản băm phiên có hạn 30 ngày. Bảng checkout_orders lưu đơn theo customer_id hoặc phiên khách. Nội dung tài khoản do nhà cung cấp giao nằm trong cột delivery dưới dạng AES-256-GCM dùng DELIVERY_KEY; trang admin không nhận nội dung này.
+
+Trình duyệt giữ phiên trong cookie HttpOnly, SameSite=Strict; khi triển khai sau HTTPS, đặt SHOPMMO_SECURE_COOKIES=true. Khi mở lịch sử, trang chuyển mã đơn cũ từ localStorage sang phiên cookie hoặc tài khoản đang đăng nhập và vô hiệu hóa mã cũ sau khi chuyển. Sao lưu tệp SQLite cùng khóa mã hóa theo hai kênh riêng.

@@ -3,16 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
 <meta name="description" content="Theo dõi thanh toán và nhận tài khoản đã mua trên ShopMMO.">
 <title>Đơn hàng | ShopMMO</title>
 <link rel="stylesheet" href="/store.css">
 </head>
-<body>
-<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham">Sản phẩm</a><a href="/orders" aria-current="page">Đơn hàng</a></nav></div></header>
-<main class="orders-wrap">
-  <section class="intro"><h1>Đơn hàng</h1><p class="muted">Xem mã đơn, trạng thái thanh toán và tài khoản đã giao trên trình duyệt này.</p></section>
+<body class="orders-page">
+<a class="skip" href="#main">Đến nội dung chính</a>
+<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham">Sản phẩm</a><a href="/orders" aria-current="page">Đơn hàng</a><a href="/account">Tài khoản</a></nav></div></header>
+<main class="orders-wrap" id="main">
+  <section class="intro"><h1>Đơn hàng</h1><p class="muted">Theo dõi thanh toán và nhận tài khoản của đơn hàng.</p></section>
   <div id="orders" class="orders-list" aria-live="polite"><p class="muted">Đang tải đơn hàng…</p></div>
   <nav id="order-pagination" class="line" aria-label="Trang đơn hàng" hidden><button id="older" type="button" class="button secondary">Đơn cũ hơn</button><span id="page-number"></span><button id="newer" type="button" class="button secondary">Đơn mới hơn</button></nav>
+  <p class="orders-back"><a href="/">Về cửa hàng</a></p>
 </main>
 <script src="/orders.js" defer></script>
 </body>

@@ -1,7 +1,8 @@
+import { createAccounts } from './accounts.mjs';
 import { createCheckout } from './checkout.mjs';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -214,8 +215,11 @@ export function createApp(env = process.env, fetcher = fetch) {
     return task;
   }
 
+  const accounts = createAccounts(db);
   const checkout = createCheckout({db,env,rows,sync,fetcher});
   const assets = new Map([
+    ['/account', ['text/html; charset=utf-8','account.html']],
+    ['/account.js', ['text/javascript; charset=utf-8','account.js']],
     ['/product', ['text/html; charset=utf-8','product.html']],
     ['/product.js', ['text/javascript; charset=utf-8','product.js']],
     ['/store.css', ['text/css; charset=utf-8','store.css']],
@@ -224,6 +228,7 @@ export function createApp(env = process.env, fetcher = fetch) {
     ['/', ['text/html; charset=utf-8', 'index.html']],
     ['/admin', ['text/html; charset=utf-8','admin.html']],
     ['/shop.js', ['text/javascript; charset=utf-8','shop.js']],
+    ['/admin.css', ['text/css; charset=utf-8','admin.css']],
     ['/admin.js', ['text/javascript; charset=utf-8','admin.js']]
   ].map(([path,[type,file]]) => [path,[type,readFileSync(new URL('./public/'+file,import.meta.url))]]));
   const key = env.ADMIN_TOKEN?.length >= 32 ? digest(env.ADMIN_TOKEN) : null;
@@ -233,13 +238,23 @@ export function createApp(env = process.env, fetcher = fetch) {
     res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Cache-Control','no-store');
-    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src https://img.vietqr.io; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src https://img.vietqr.io; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     const json = (status,data) => {
       res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
       res.end(JSON.stringify(data));
     };
     try {
-      const path = new URL(req.url,'http://localhost').pathname;
+      const url = new URL(req.url,'http://localhost');
+      const path = url.pathname;
+      const cookies = req.headers.cookie??'';
+      const session = /(?:^|;\s*)shopmmo_guest=([a-f0-9]{64})(?:;|$)/.exec(cookies)?.[1];
+      const accountSession = /(?:^|;\s*)shopmmo_account=([a-f0-9]{64})(?:;|$)/.exec(cookies)?.[1];
+      const customer = accounts.get(accountSession);
+      const storefront = req.headers['x-shopmmo-request']==='storefront' &&
+        (!req.headers['sec-fetch-site'] || req.headers['sec-fetch-site']==='same-origin');
+      const cookie = (name,value,age) => name+'='+value+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+age+
+        (env.SHOPMMO_SECURE_COOKIES==='true'?'; Secure':'');
+      const saveSession = guest => res.setHeader('Set-Cookie',cookie('shopmmo_guest',guest,7776000));
       const asset = assets.get(/^\/products\/[a-z0-9-]{1,40}$/.test(path)?'/product':path);
       if (req.method === 'GET' && asset) {
         res.writeHead(200,{'Content-Type':asset[0]});
@@ -253,10 +268,22 @@ export function createApp(env = process.env, fetcher = fetch) {
             paymentReady:checkout.sellable(item),referencePrice:item.listingPrice??null}));
         return json(200,{products});
       }
-      const publicPost = ['/api/checkout','/api/orders/lookup','/api/payments/gpmpay'].includes(path) && req.method === 'POST';
+      const browserPost = ['/api/checkout','/api/order/payment','/api/orders/import','/api/account/login','/api/account/register','/api/account/logout'].includes(path);
+      const publicPost = (browserPost || ['/api/orders/lookup','/api/payments/gpmpay'].includes(path)) && req.method === 'POST';
       const orderToken = req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
       if (req.method === 'GET' && path === '/api/order') return json(...checkout.status(orderToken));
-      if (req.method === 'POST' && path === '/api/order/payment') return json(...checkout.startPayment(orderToken));
+      if (req.method === 'GET' && path === '/api/account') return json(200,{user:customer?{email:customer.email}:null});
+      if (req.method === 'GET' && path === '/api/orders') {
+        const page = url.searchParams.get('page')??'0';
+        if (!/^\d{1,5}$/.test(page)) return json(400,{message:'Trang đơn hàng không hợp lệ.'});
+        return json(200,checkout.customerOrders(session,Number(page),customer));
+      }
+      if (req.method === 'POST' && path === '/api/order/payment' && orderToken) {
+        return json(...checkout.startPayment({token:orderToken}));
+      }
+      if (req.method === 'POST' && browserPost && !storefront) {
+        return json(403,{message:'Mở trang ShopMMO để thực hiện thao tác này.'});
+      }
       if (!publicPost && !path.startsWith('/api/admin/')) return json(404,{message:'Không tìm thấy.'});
       const auth = req.headers.authorization;
       if (!publicPost && (!key || !auth?.startsWith('Bearer ') || !timingSafeEqual(key,digest(auth.slice(7))))) {
@@ -289,7 +316,35 @@ export function createApp(env = process.env, fetcher = fetch) {
         });
         return json(200,{orders});
       }
-      if (path === '/api/checkout') return json(...checkout.create(input));
+      if (path === '/api/order/payment') return json(...checkout.startPayment({session,customer,code:input?.code}));
+      if (path === '/api/checkout') {
+        const guest = session??randomBytes(32).toString('hex');
+        const result = checkout.create(input,guest,customer);
+        if (!session && !customer && result[0]===201) saveSession(guest);
+        return json(...result);
+      }
+      if (path === '/api/orders/import') {
+        const tokens=input?.tokens;
+        if (!Array.isArray(tokens) || !tokens.length || tokens.length>10 ||
+          tokens.some(token=>typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token))) return json(400,{message:'Mã truy cập đơn cũ không hợp lệ.'});
+        const guest=session??randomBytes(32).toString('hex');
+        const imported=checkout.importOrders(guest,tokens,customer);
+        if (!session && !customer && imported.length) saveSession(guest);
+        return json(200,{imported});
+      }
+      if (path === '/api/account/logout') {
+        accounts.logout(accountSession);
+        res.setHeader('Set-Cookie',cookie('shopmmo_account','',0));
+        return json(200,{user:null});
+      }
+      if (path === '/api/account/login' || path === '/api/account/register') {
+        const [status,result] = await accounts.authenticate(path.endsWith('/login')?'login':'register',input);
+        if (!result.user) return json(status,result);
+        checkout.claimGuestOrders(session,result.user);
+        accounts.logout(accountSession);
+        res.setHeader('Set-Cookie',[cookie('shopmmo_account',result.token,2592000),cookie('shopmmo_guest','',0)]);
+        return json(status,{user:{email:result.user.email}});
+      }
       if (path === '/api/payments/gpmpay') return json(...checkout.webhook(input,raw,req.headers['x-gpmpay-signature']));
       if (path === '/api/admin/order-reconcile') {
         if (!Number.isSafeInteger(input?.code)) return json(400,{message:'Mã đơn không hợp lệ.'});

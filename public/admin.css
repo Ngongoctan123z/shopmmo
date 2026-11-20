@@ -1,0 +1,12 @@
+:root{font-family:system-ui,sans-serif;background:#f1f6f3;color:#18332a}*{box-sizing:border-box}body{margin:0}
+header{background:#0b503c;color:white}header div,main{width:min(1180px,calc(100% - 32px));margin:auto}
+header div{padding:16px 0;display:flex;align-items:center;justify-content:space-between}header a{color:white}
+h1{margin:0;font-size:1.35rem}h2{margin:0 0 14px;font-size:1.22rem}
+section{background:white;border:1px solid #d7e5dd;border-radius:12px;padding:18px;margin:18px 0}
+form,.row,.tools{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+label{display:grid;gap:5px}input,select,button{font:inherit;padding:8px 10px;border:1px solid #b8cbc0;border-radius:7px;background:white;color:inherit}
+button{cursor:pointer;background:#096547;color:white;border-color:#096547}button:disabled{opacity:.55;cursor:default}
+.source{border:1px solid #d7e5dd;padding:12px;border-radius:10px}.source p{margin:8px 0}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;margin-top:14px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #d7e5dd;vertical-align:top}td small{display:block;color:#536a60;margin-top:4px}
+td input[type=number]{width:120px}.confirm{display:flex;align-items:center;gap:5px;margin:8px 0}.confirm input{margin:0}
+#status{min-height:1.4em;color:#175f49}#events{padding-left:20px}a{color:#096547}[hidden]{display:none!important}.tools{margin-bottom:12px}

@@ -3,20 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
 <meta name="description" content="Chọn gói tài khoản số, đặt hàng và theo dõi giao hàng tại ShopMMO.">
 <title>ShopMMO | Cửa hàng tài khoản số</title>
 <link rel="stylesheet" href="/store.css">
 </head>
 <body>
-<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham" aria-current="page">Sản phẩm</a><a href="/orders">Đơn hàng</a></nav></div></header>
-<main class="wrap">
-  <section class="intro"><h1>Cửa hàng tài khoản số</h1><p class="muted">CapCut, Canva và ứng dụng làm đẹp. Chọn gói và theo dõi đơn ngay trên ShopMMO.</p></section>
-  <section class="catalog" id="san-pham" aria-labelledby="catalog-title">
+<a class="skip" href="#main">Đến nội dung chính</a>
+<header class="site-header"><div class="wrap bar"><a class="brand" href="/">ShopMMO</a><nav class="nav" aria-label="Điều hướng chính"><a href="/#san-pham" aria-current="page">Sản phẩm</a><a href="/orders">Đơn hàng</a><a href="/account">Tài khoản</a></nav></div></header>
+<main id="main">
+  <section class="intro masthead"><div class="wrap"><h1>Cửa hàng tài khoản số</h1><p class="muted">Chọn gói, đặt hàng và theo dõi trên ShopMMO.</p></div></section>
+  <section class="wrap catalog" id="san-pham" aria-labelledby="catalog-title">
     <div class="catalog-head">
       <div><h2 id="catalog-title">Sản phẩm</h2><p class="muted" id="count" aria-live="polite"></p></div>
-      <div class="filters"><input id="search" type="search" aria-label="Tìm sản phẩm" placeholder="Tìm sản phẩm hoặc gói…"><select id="product" aria-label="Sản phẩm"><option value="">Tất cả sản phẩm</option></select></div>
+      <div class="filters"><input id="search" name="q" autocomplete="off" type="search" aria-label="Tìm sản phẩm" placeholder="Tìm sản phẩm hoặc gói…"><select id="product" name="san-pham" aria-label="Sản phẩm"><option value="">Tất cả sản phẩm</option></select></div>
     </div>
-    <div class="panel catalog-list" id="grid"><p class="empty">Đang tải danh mục…</p></div>
+    <div class="catalog-grid" id="grid"><p class="empty">Đang tải danh mục…</p></div>
     <noscript>Bật JavaScript để chọn gói và đặt hàng.</noscript>
   </section>
 </main>
