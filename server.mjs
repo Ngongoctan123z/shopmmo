@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 const sources = ['uniz', 'melody'];
-const brands = ['Netflix','NordVPN','AdGuard VPN','CapCut','Canva','Meitu','Spotify','YouTube','Disney+','Prime Video','Khác'];
+const brands = ['CapCut','Canva','Meitu','Hypic','Wink','Xingtu','FPT Play','BeautyCam','VSCO','Xinghui','Làm đẹp'];
 const base = {
   uniz: 'https://unizvn.com/p/',
   melody: 'https://melodyapp.vn/product/'
@@ -20,27 +20,47 @@ const cents = value => typeof value === 'number' && Number.isFinite(value) && va
 const digest = value => createHash('sha256').update(value).digest();
 const aiSignals = /\b(ai|llm|gpt|openai|chatgpt|claude|gemini|copilot|grok|anthropic|suno|midjourney|deepseek|veo\s?3|hailuo|elevenlabs|magic studio)\b/;
 const manualSignals = /\b(nang cap|chinh chu|xu ly|cho admin|thu cong|manual|pending|upgrade|gift link|redeem|cdk|otp|api key|license key)\b/;
-const reviewedUniz = new Map([
-  ['netflix-premium-4k-1-thang-bhf', 'Netflix'],
-  ['nordvpn-3-ngay-bhf-f4faea', 'NordVPN'],
-  ['adguard-vpn-5-7-ngay-bhf-4df89a', 'AdGuard VPN']
+// Uniz's inventory API omits delivery mode. Check these exact variants on their public product pages.
+const unizCatalog = new Map([
+  ['capcut-pro-ca-nhan-1-thang-bhf','CapCut'],
+  ['admin-canva-pro-business-100-slot-1-thang-bhf-052693','Canva']
 ]);
+const melodyReviewed = new Map([
+  ['773','Meitu'],['805','Meitu'],['774','Meitu'],['777','Meitu'],['775','Meitu'],
+  ['818','Hypic'],['782','Wink']
+]);
+const beautyApps = [
+  ['meitu','Meitu'],['hypic','Hypic'],['wink','Wink'],['xingtu','Xingtu'],
+  ['beautycam','BeautyCam'],['vsco','VSCO'],['xinghui','Xinghui']
+];
 
-function offer(source, id, slug, name, plan, category, referencePrice, stock, instant, description = '', hasFields = false) {
-  if (!slugOk(slug) || !name || !cents(referencePrice)) throw Error('Danh mục chứa gói sai định dạng.');
-  const searchable = [name, plan, category, slug, description.replace(/<[^>]*>/g, ' ')].map(fold).join(' ').replace(/-/g, ' ');
-  const blocked = aiSignals.test(searchable) || (source === 'uniz' && /\b(capcut|canva)\b/.test(searchable))
-    ? 'Có dấu hiệu liên quan đến AI'
-    : hasFields || manualSignals.test(searchable) || instant === false ? 'Cần xử lý hoặc xác minh theo gói' : '';
-  const fingerprint = digest(JSON.stringify([slug,name,plan,category,description,instant,blocked])).toString('hex');
-  return { id, slug, name, plan, category, referencePrice, stock, instant, blocked, fingerprint, source };
+function brandFor(source, id, name, slug, category) {
+  if (source === 'uniz') return unizCatalog.get(id);
+  const product = fold(name+' '+slug);
+  if (/\bfpt play\b/.test(product.replace(/-/g,' '))) return 'FPT Play';
+  return beautyApps.find(([key])=>product.includes(key))?.[1] ??
+    (/\blam dep\b/.test(fold(category)) ? 'Làm đẹp' : null);
 }
 
-export function normalizeUniz(data) {
+function offer(source,id,slug,name,plan,category,referencePrice,stock,instant,description='',hasFields=false,listingPrice=referencePrice) {
+  if (!slugOk(slug) || !name || !cents(referencePrice)) throw Error('Danh mục chứa gói sai định dạng.');
+  const brand = brandFor(source,id,name,slug,category);
+  const identity = [name,plan,slug].map(fold).join(' ').replace(/-/g,' ');
+  let blocked = '';
+  if (!brand) blocked = 'Ngoài phạm vi danh mục ShopMMO';
+  else if (source === 'melody' && id === '809') blocked = 'Gói hiện có yêu cầu số điện thoại chính chủ và chờ kích hoạt 5–10 phút';
+  else if (aiSignals.test(identity)) blocked = 'Gói riêng có dấu hiệu liên quan đến AI';
+  else if (brand === 'Xingtu' && /\botp\b/i.test(description)) blocked = 'Đăng nhập cần OTP từ nhà cung cấp';
+  else if (hasFields || manualSignals.test(fold(plan)) || instant === false) blocked = 'Gói cần xử lý hoặc cần thông tin bổ sung';
+  const fingerprint = digest(JSON.stringify([slug,name,plan,category,description,instant,blocked])).toString('hex');
+  return {id,slug,name,plan,category,referencePrice,listingPrice,stock,instant,blocked,fingerprint,source};
+}
+
+export function normalizeUniz(data, instantSlugs = new Set()) {
   if (data?.success !== true || !Array.isArray(data.products) || data.total !== data.products.length) throw Error('Uniz trả danh mục không đầy đủ.');
   return data.products.map(row => {
     if (typeof row.inStock !== 'boolean') throw Error('Uniz trả trạng thái kho không hợp lệ.');
-    return offer('uniz', String(row.slug), row.slug, text(row.name), '', text(row.category), row.price, row.inStock, null);
+    return offer('uniz', String(row.slug), row.slug, text(row.name), '', text(row.category), row.price, row.inStock, instantSlugs.has(row.slug));
   });
 }
 
@@ -56,12 +76,12 @@ export function normalizeMelody(data) {
       return offer('melody', String(plan.id), product.slug, text(product.name), text(plan.name), category,
         plan.final_price, plan.in_stock && Number.isInteger(plan.stock_count) && plan.stock_count > 0,
         plan.is_instant, String(product.description ?? '').slice(0, 20_000) + ' ' + String(plan.description ?? '').slice(0, 20_000),
-        plan.fields.length > 0);
+        plan.fields.length > 0, cents(plan.price) ? plan.price : null);
     });
   });
 }
 
-async function requestCatalog(url, headers, fetcher) {
+async function requestText(url, headers, fetcher, limit) {
   const response = await fetcher(url, { headers, signal: AbortSignal.timeout(12_000), redirect: 'error' });
   if (!response.ok) throw Error('Nhà cung cấp trả HTTP ' + response.status + '.');
   const reader = response.body.getReader();
@@ -71,14 +91,36 @@ async function requestCatalog(url, headers, fetcher) {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.length;
-    if (size > 8_000_000) {
+    if (size > limit) {
       await reader.cancel();
       throw Error('Danh mục vượt giới hạn dung lượng.');
     }
     chunks.push(value);
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function requestCatalog(url, headers, fetcher) {
+  const body = await requestText(url,headers,fetcher,8_000_000);
+  try { return JSON.parse(body); }
   catch { throw Error('Nhà cung cấp trả JSON không hợp lệ.'); }
+}
+
+async function liveUnizInstant(catalog,fetcher) {
+  const products = Array.isArray(catalog?.products)?catalog.products:[];
+  const checks = await Promise.all(products.filter(item=>unizCatalog.has(item.slug) && item.inStock === true).map(async item=>{
+    try {
+      const body = await requestText(base.uniz+item.slug,{},fetcher,1_500_000);
+      const heading = /<h1\b[^>]*>([^<]+)<\/h1>/i.exec(body);
+      if (!heading || fold(heading[1]) !== fold(item.name)) return null;
+      const details = body.slice(heading.index+heading[0].length,heading.index+heading[0].length+1300);
+      const badge = /<span\b[^>]*>\s*(Có ngay|Giao hàng)\s*<\/span>/i.exec(details);
+      return badge?.[1] === 'Có ngay'?item.slug:null;
+    } catch {
+      return null;
+    }
+  }));
+  return new Set(checks.filter(Boolean));
 }
 
 export function createApp(env = process.env, fetcher = fetch) {
@@ -106,9 +148,13 @@ export function createApp(env = process.env, fetcher = fetch) {
     const products = record ? JSON.parse(record.payload).map(item => {
       const review = reviews.get(item.id);
       const approved = review?.fingerprint === item.fingerprint;
-      const instant = item.instant === true || (item.instant === null && approved);
-      return {...item, brand: review?.brand ?? 'Khác', price: review?.price ?? null,
-        approved, published: Boolean(approved && review.published), eligible: !item.blocked && instant && item.stock && fresh,
+      const scopedBrand = brandFor(source,item.id,item.name,item.slug,item.category);
+      const instant = item.instant === true;
+      const blocked = !scopedBrand ? 'Ngoài phạm vi danh mục ShopMMO' :
+        source === 'melody' && item.id === '809' ? 'Gói hiện có yêu cầu số điện thoại chính chủ và chờ kích hoạt 5–10 phút' : item.blocked;
+      return {...item, blocked, brand: scopedBrand ?? 'Ngoài phạm vi', price: review?.price ?? null,
+        approved, published: Boolean(approved && review.published && !blocked),
+        eligible: !blocked && instant && item.stock && fresh,
         url: base[source] + item.slug};
     }) : [];
     return { updated: record?.updated ?? null, fresh, products };
@@ -122,7 +168,8 @@ export function createApp(env = process.env, fetcher = fetch) {
         let items;
         if (source === 'uniz') {
           const headers = env.UNIZ_API_KEY ? {'x-api-key':env.UNIZ_API_KEY} : {};
-          items = normalizeUniz(await requestCatalog('https://unizvn.com/api/v1/products',headers,fetcher));
+          const catalog = await requestCatalog('https://unizvn.com/api/v1/products',headers,fetcher);
+          items = normalizeUniz(catalog,await liveUnizInstant(catalog,fetcher));
         } else {
           const headers = {'X-API-Key':env.MELODY_API_KEY,'X-API-Secret':env.MELODY_API_SECRET};
           const url = 'https://melodyapp.vn/api/v1/products/list';
@@ -141,10 +188,13 @@ export function createApp(env = process.env, fetcher = fetch) {
         if (new Set(items.map(item=>item.id)).size !== items.length) throw Error('Danh mục có mã gói trùng.');
         db.exec('BEGIN IMMEDIATE');
         try {
-          const first = !snapshot.get(source);
           db.prepare('INSERT OR REPLACE INTO snapshots VALUES(?,?,?)').run(source,Date.now(),JSON.stringify(items));
-          if (first && source === 'uniz') for (const item of items) {
-            if (reviewedUniz.has(item.id) && !item.blocked) writeReview.run(source,item.id,item.fingerprint,reviewedUniz.get(item.id),1,null);
+          const selected = source === 'uniz' ? unizCatalog : melodyReviewed;
+          const publishDefault = db.prepare('INSERT OR IGNORE INTO reviews VALUES(?,?,?,?,?,?)');
+          for (const item of items) {
+            const brand = selected.get(item.id);
+            if (brand && brand === brandFor(source,item.id,item.name,item.slug,item.category) &&
+                item.instant && item.stock && !item.blocked) publishDefault.run(source,item.id,item.fingerprint,brand,1,null);
           }
           event.run(Date.now(),source,'Đồng bộ',items.length + ' gói');
           db.exec('COMMIT');
@@ -193,7 +243,7 @@ export function createApp(env = process.env, fetcher = fetch) {
           .filter(item=>item.eligible && item.published)
           .map(item=>({name:item.name,plan:item.plan,brand:item.brand,price:item.price,url:item.url,
             source:item.source,id:item.id,buyable:checkout.sellable(item),
-            referencePrice:item.source==='uniz'?item.referencePrice:null}));
+            referencePrice:item.listingPrice??null}));
         return json(200,{products});
       }
       const publicPost = ['/api/checkout','/api/payments/gpmpay'].includes(path) && req.method === 'POST';
@@ -241,7 +291,7 @@ export function createApp(env = process.env, fetcher = fetch) {
         const state = rows(source);
         const item = state.products.find(item=>item.id===input.id);
         if (!item || item.fingerprint !== input.fingerprint) return json(409,{message:'Gói đã thay đổi. Tải lại danh mục.'});
-        if (!brands.includes(input.brand) || typeof input.published !== 'boolean' || !(input.price === null || (cents(input.price) && Number.isInteger(input.price)))) {
+        if (input.brand !== item.brand || !brands.includes(input.brand) || typeof input.published !== 'boolean' || !(input.price === null || (cents(input.price) && Number.isInteger(input.price)))) {
           return json(400,{message:'Thương hiệu hoặc giá bán không hợp lệ.'});
         }
         if (input.published && (item.blocked || !item.stock || !state.fresh || input.confirmed !== true ||

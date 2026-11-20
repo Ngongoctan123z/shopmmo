@@ -74,6 +74,7 @@ function render(){
 function renderRows(){
   const query=$('query').value.trim().toLowerCase(), supplier=$('supplier').value, status=$('statusFilter').value;
   const matches=state.sources.flatMap(source=>source.products).filter(item=>{
+    if(item.brand==='Ngoài phạm vi') return false;
     const live=item.published&&item.eligible;
     const kind=item.blocked?'blocked':!item.stock?'stock':live?'live':'pending';
     return (!supplier||item.source===supplier)&&(!status||status===kind)&&[item.name,item.plan,item.id].join(' ').toLowerCase().includes(query);
@@ -91,16 +92,14 @@ function makeRow(item){
   info.append(link,node('small',[sourceName[item.source],item.plan,item.id].filter(Boolean).join(' · ')));
   status.append(node('strong',item.blocked||(!item.stock?'Hết hàng':item.instant===true?'Giao tự động':'Cần xác nhận giao ngay')),
     node('small',item.published&&item.eligible?'Đang hiển thị':'Đang ẩn'));
-  const brand=node('select');brand.setAttribute('aria-label','Thương hiệu '+item.name);
-  for (const value of state.brands) brand.add(new Option(value,value));
-  brand.value=item.brand;
+  const brand=node('span',item.brand);
   const price=node('input');price.type='number';price.min='0';price.max='100000000';price.step='1';
   price.placeholder='Giá bán ₫';price.setAttribute('aria-label','Giá bán '+item.name);price.value=item.price??'';
   settings.append(brand,price,node('small','Giá nguồn '+new Intl.NumberFormat('vi-VN').format(item.referencePrice)+' ₫'));
   const confirm=node('input');confirm.type='checkbox';
-  const label=node('label');label.className='confirm';label.append(confirm,node('span','Tài khoản không AI, giao ngay'));
+  const label=node('label');label.className='confirm';label.append(confirm,node('span','Đã kiểm tra điều kiện gói và giao ngay'));
   const save=published=>async()=>{
-    const result=await api('review',{source:item.source,id:item.id,fingerprint:item.fingerprint,brand:brand.value,price:price.value===''?null:Number(price.value),published,confirmed:confirm.checked});
+    const result=await api('review',{source:item.source,id:item.id,fingerprint:item.fingerprint,brand:item.brand,price:price.value===''?null:Number(price.value),published,confirmed:confirm.checked});
     await refresh();
     return result.message;
   };

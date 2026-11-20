@@ -20,10 +20,14 @@ Mặc định ứng dụng nghe trên http://127.0.0.1:8787. Chạy sau reverse 
 
 1. Mở /admin và nhập ADMIN_TOKEN. Trình duyệt chỉ giữ mã trong bộ nhớ của tab.
 2. Xem trạng thái và lần cập nhật của từng API. Đồng bộ định kỳ mỗi 5 phút hoặc nhấn Đồng bộ ngay.
-3. Lọc gói chờ duyệt, đang hiển thị, bị chặn hoặc hết hàng. Kiểm tra từng SKU với nhà cung cấp. Chọn thương hiệu và giá bán. Giá bán phải được nhập riêng cho MelodyApp để không công bố giá CTV.
-4. Xác nhận đây là tài khoản không AI và giao ngay rồi đăng. Có thể cập nhật giá hoặc ẩn gói. Màn hình quản trị có nhật ký cho các thao tác đồng bộ và đổi trạng thái.
+3. Lọc gói chờ duyệt, đang hiển thị, bị chặn hoặc hết hàng. Kiểm tra từng SKU với nhà cung cấp. Thương hiệu được gắn theo gói nguồn. Nhập giá bán nếu muốn mở checkout. Giá bán phải được nhập riêng cho MelodyApp để không công bố giá CTV.
+4. Xác nhận điều kiện giao ngay của gói rồi đăng. Có thể cập nhật giá hoặc ẩn gói. Màn hình quản trị có nhật ký cho các thao tác đồng bộ và đổi trạng thái.
 
-MelodyApp yêu cầu is_instant, in_stock và stock_count dương; gói cần nhập thông tin bị chặn. Uniz trả inStock nhưng không có trường chế độ giao hàng. Ba SKU Uniz ban đầu được chọn theo nhãn Có ngay trên trang công khai, những SKU khác cần admin kiểm tra. Gói bị chặn bởi dấu hiệu AI hoặc xử lý thủ công không thể đăng. Dữ liệu quá 20 phút, SKU mất khỏi nguồn hoặc gói đổi thông tin sẽ tự ẩn.
+Danh mục Uniz giới hạn hai SKU đã chọn, CapCut Pro Cá Nhân 1 Tháng và Admin Canva Pro Business 100 Slot 1 Tháng. Vì API Uniz chỉ trả inStock, mỗi lần đồng bộ backend đối chiếu tiêu đề SKU và nhãn Có ngay trên trang sản phẩm. Kiểm tra thất bại sẽ ẩn gói.
+
+MelodyApp được giới hạn trong nhóm làm đẹp và FPT Play. Gói đăng bán yêu cầu is_instant, in_stock, stock_count dương và không có trường nhập bổ sung. Danh sách mở đầu gồm các gói sẵn của Meitu, Hypic và Wink. Giữ gói FPT Play 809 trong admin vì mô tả yêu cầu số điện thoại và chờ kích hoạt. Xingtu yêu cầu OTP do shop cung cấp nên bị chặn.
+
+Các gói đã chọn được đăng lần đầu với giá niêm yết tham khảo từ nguồn. Admin đặt giá bán riêng trước checkout. Đồng bộ không ghi đè gói đã ẩn hoặc giá đã đặt. Dữ liệu quá 20 phút, SKU mất khỏi nguồn hoặc gói đổi thông tin sẽ tự ẩn.
 
 Khi triển khai công khai, đặt khóa nhà cung cấp bằng secret của máy chủ và hạn chế IP truy cập /admin và /api/admin/ nếu reverse proxy hỗ trợ.
 

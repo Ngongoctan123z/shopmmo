@@ -60,7 +60,9 @@ function render(){
   if(!matches.length){
     const empty = document.createElement('p');
     empty.className = 'empty';
-    empty.textContent = 'Hiện chưa có gói phù hợp đủ điều kiện giao ngay.';
+    empty.textContent = menu.value==='FPT Play'
+      ? 'Gói FPT Play hiện cần số điện thoại chính chủ và thời gian kích hoạt. ShopMMO chưa mở bán gói này.'
+      : 'Hiện chưa có gói phù hợp đủ điều kiện giao ngay.';
     grid.append(empty);
   }
 }

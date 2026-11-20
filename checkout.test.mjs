@@ -9,14 +9,16 @@ const env={SHOPMMO_DB:':memory:',ADMIN_TOKEN:token,DELIVERY_KEY:'ab'.repeat(32),
 let purchases=0;
 let balance=100000;
 let unizPurchases=0;
-const unizSku='netflix-premium-4k-1-thang-bhf';
+let unizBadge='Có ngay';
+const unizSku='capcut-pro-ca-nhan-1-thang-bhf';
 let outcome='completed';
 const fetcher=(url,options)=>{
   if(url.startsWith('https://unizvn.com/')){
+    if(url.includes('/p/')) return new Response('<h1>CapCut Pro</h1><span>'+unizBadge+'</span>');
     assert.equal(options.headers['x-api-key'],'fixture-uniz');
     if(url.endsWith('/balance')) return new Response(JSON.stringify({status:true,success:true,balance:100000}));
     if(url.endsWith('/products')) return new Response(JSON.stringify({success:true,total:1,
-      products:[{slug:unizSku,name:'Netflix Premium',category:'Giải trí',price:30000,inStock:true}]}));
+      products:[{slug:unizSku,name:'CapCut Pro',category:'Giải trí',price:30000,inStock:true}]}));
     assert(url.endsWith('/orders'));
     assert.equal(options.method,'POST');
     assert.deepEqual(JSON.parse(options.body),{slug:unizSku,qty:1});
@@ -39,7 +41,7 @@ const fetcher=(url,options)=>{
     return new Response(JSON.stringify({success:true,data:{orders:[receipt]}}));
   }
   return new Response(JSON.stringify({success:true,data:{products:[{
-    slug:'spotify',name:'Spotify',plans:[{id:15,name:'Tài khoản tháng',is_instant:true,in_stock:true,stock_count:5,fields:[],final_price:30000}]
+    slug:'meitu',name:'Meitu',plans:[{id:15,name:'Tài khoản tháng',is_instant:true,in_stock:true,stock_count:5,fields:[],final_price:30000}]
   }]}}));
 };
 const app=createApp(env,fetcher);
@@ -58,7 +60,7 @@ try {
   assert.equal((await post('/api/admin/supplier-check',{source:'melody'},auth)).status,200);
   const state=await (await fetch(base+'/api/admin/state',{headers:auth})).json();
   const item=state.sources.find(s=>s.source==='melody').products[0];
-  assert.equal((await post('/api/admin/review',{source:'melody',id:item.id,fingerprint:item.fingerprint,brand:'Spotify',price:35000,published:true,confirmed:true},auth)).status,200);
+  assert.equal((await post('/api/admin/review',{source:'melody',id:item.id,fingerprint:item.fingerprint,brand:'Meitu',price:35000,published:true,confirmed:true},auth)).status,200);
   assert.equal((await post('/api/checkout',{source:'melody',id:item.id,price:1})).status,409);
   const create=async()=>{
     const response=await post('/api/checkout',{source:'melody',id:item.id,price:35000});
@@ -126,7 +128,7 @@ try {
   assert.equal((await post('/api/admin/supplier-check',{source:'uniz'},auth)).status,200);
   const unizState=await (await fetch(base+'/api/admin/state',{headers:auth})).json();
   const unizItem=unizState.sources.find(s=>s.source==='uniz').products[0];
-  assert.equal((await post('/api/admin/review',{source:'uniz',id:unizItem.id,fingerprint:unizItem.fingerprint,brand:'Netflix',price:35000,
+  assert.equal((await post('/api/admin/review',{source:'uniz',id:unizItem.id,fingerprint:unizItem.fingerprint,brand:'CapCut',price:35000,
     published:true,confirmed:true},auth)).status,200);
   const unizOrder=await (await post('/api/checkout',{source:'uniz',id:unizItem.id,price:35000})).json();
   const unizPayment=paymentFor(unizOrder);
@@ -136,5 +138,9 @@ try {
   const admin=await (await fetch(base+'/api/admin/state',{headers:auth})).json();
   assert.equal(admin.orders.find(o=>o.code===unizOrder.code).supplier_ref,'UZ-FIXTURE');
   assert(!JSON.stringify(admin).includes('uniz | sample'));
+  unizBadge='Giao hàng';
+  await app.sync('uniz');
+  const catalog = await (await fetch(base+'/api/catalog')).json();
+  assert(!catalog.products.some(p=>p.id===unizSku),'A provider switch to manual delivery hides the offer');
   console.log('PASS: both suppliers, payment checks, wallet gating, encrypted delivery, read-only reconciliation, timeout and duplicate protection');
 } finally { await new Promise(resolve=>app.server.close(resolve)); app.db.close(); }
