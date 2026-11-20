@@ -25,9 +25,22 @@ Mặc định ứng dụng nghe trên http://127.0.0.1:8787. Chạy sau reverse 
 
 MelodyApp yêu cầu is_instant, in_stock và stock_count dương; gói cần nhập thông tin bị chặn. Uniz trả inStock nhưng không có trường chế độ giao hàng. Ba SKU Uniz ban đầu được chọn theo nhãn Có ngay trên trang công khai, những SKU khác cần admin kiểm tra. Gói bị chặn bởi dấu hiệu AI hoặc xử lý thủ công không thể đăng. Dữ liệu quá 20 phút, SKU mất khỏi nguồn hoặc gói đổi thông tin sẽ tự ẩn.
 
-Tích hợp hiện tại chỉ gọi API đọc dữ liệu sản phẩm. Giao dịch diễn ra trên trang nhà cung cấp. Khi triển khai công khai, đặt khóa nhà cung cấp bằng secret của máy chủ và hạn chế IP truy cập /admin và /api/admin/ nếu reverse proxy hỗ trợ.
+Khi triển khai công khai, đặt khóa nhà cung cấp bằng secret của máy chủ và hạn chế IP truy cập /admin và /api/admin/ nếu reverse proxy hỗ trợ.
 
 ## Nguồn
 
 - https://melodyapp.vn/document-api
 - https://unizvn.com/api-docs
+
+
+## Thanh toán VietQR qua GPM Pay
+
+- Sử dụng tài khoản nhận tiền mà bạn sở hữu hoặc được ủy quyền. Điền mã BIN NAPAS 6 chữ số, số tài khoản và tên chủ tài khoản vào các biến GPMPAY_BANK_BIN, GPMPAY_ACCOUNT_NUMBER và GPMPAY_ACCOUNT_NAME.
+- Trên GPM Pay, thêm webhook HTTPS mới cho ShopMMO tại /api/payments/gpmpay, chọn HMAC và cấu hình cùng một secret ngẫu nhiên dài ít nhất 32 ký tự trong GPMPAY_WEBHOOK_SECRET. Giữ nguyên webhook của VNDocs nếu đang dùng chung tài khoản.
+- DELIVERY_KEY là 32 byte ngẫu nhiên biểu diễn bằng đúng 64 ký tự hex. Sao lưu khóa riêng vì nó dùng để mã hóa tài khoản đã giao. Tạo khóa bằng node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))".
+- Bật MELODY_ORDER_ENABLED hoặc UNIZ_ORDER_ENABLED riêng theo nhà cung cấp khi đã xác nhận quyền tạo đơn, số dư ví và đối soát. MelodyApp cần quyền orders.create. Đặt giá bán từng SKU trong admin, tối thiểu 2.000 đ và không thấp hơn giá vốn API.
+- Một đơn mua một gói và có mã chuyển khoản riêng. Hệ thống chỉ xử lý cho tiền vào thật, đúng tài khoản, số tiền, mã đơn và thời hạn 30 phút. Webhook giả lập được bỏ qua. Xem các đơn lệch tiền hay lỗi nhập hàng trong bảng Đơn hàng ShopMMO. Các trường hợp nhập hàng chưa rõ kết quả cần kiểm tra bên nguồn trước khi xử lý lại. Trạng thái đối soát không tự hoàn tiền.
+- Khách mở mục Đơn hàng trên trình duyệt đã đặt để theo dõi và nhận nội dung. Trình duyệt lưu mã truy cập đơn. Không chia sẻ trình duyệt dùng để nhận đơn trên máy công cộng.
+- Chạy kiểm thử không giao dịch thật bằng node checkout.test.mjs.
+
+Tài liệu: https://docs.gpmpay.com/webhook và https://docs.gpmpay.com/

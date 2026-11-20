@@ -41,6 +41,15 @@ function render(){
     $('sources').append(box);
   }
   $('events').replaceChildren(...state.events.map(item=>node('li',stamp(item.at)+' · '+sourceName[item.source]+' · '+item.action+' · '+item.detail)));
+  $('payment-config').textContent=state.checkoutConfigured?'GPM Pay đã có cấu hình máy chủ.':'GPM Pay đang chờ cấu hình tài khoản nhận, khóa webhook và khóa mã hóa.';
+  $('orders').replaceChildren(...state.orders.map(item=>{
+    const row=node('tr');
+    const ref=node('td',String(item.code));ref.append(node('small',item.name));
+    const detail=node('td',item.state);if(item.detail)detail.append(node('small',item.detail));
+    if(item.payment_ref)detail.append(node('small',item.payment_ref));
+    row.append(ref,node('td',new Intl.NumberFormat('vi-VN').format(item.amount)+' ₫'),detail);
+    return row;
+  }));
   renderRows();
 }
 function renderRows(){
@@ -87,7 +96,7 @@ $('login').addEventListener('submit',async event=>{
   try{await refresh();$('status').textContent='Đã mở trang quản trị.';}
   catch(error){token='';$('status').textContent=error.message;}
 });
-$('logout').addEventListener('click',()=>{token='';state=null;$('dashboard').hidden=true;$('sources').replaceChildren();$('products').replaceChildren();$('events').replaceChildren();$('logout').hidden=true;$('login').hidden=false;$('status').textContent='Đã đăng xuất.';});
+$('logout').addEventListener('click',()=>{token='';state=null;$('dashboard').hidden=true;$('sources').replaceChildren();$('products').replaceChildren();$('events').replaceChildren();$('orders').replaceChildren();$('logout').hidden=true;$('login').hidden=false;$('status').textContent='Đã đăng xuất.';});
 $('query').addEventListener('input',()=>{page=0;renderRows();});
 for(const id of ['supplier','statusFilter']) $(id).addEventListener('change',()=>{page=0;renderRows();});
 $('prev').addEventListener('click',()=>{page--;renderRows();});

@@ -1,3 +1,4 @@
+import { createCheckout } from './checkout.mjs';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -159,7 +160,10 @@ export function createApp(env = process.env, fetcher = fetch) {
     return task;
   }
 
+  const checkout = createCheckout({db,env,rows,sync,fetcher});
   const assets = new Map([
+    ['/orders', ['text/html; charset=utf-8','orders.html']],
+    ['/orders.js', ['text/javascript; charset=utf-8','orders.js']],
     ['/', ['text/html; charset=utf-8', 'index.html']],
     ['/admin', ['text/html; charset=utf-8','admin.html']],
     ['/shop.js', ['text/javascript; charset=utf-8','shop.js']],
@@ -172,7 +176,7 @@ export function createApp(env = process.env, fetcher = fetch) {
     res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Cache-Control','no-store');
-    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src https://img.vietqr.io; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     const json = (status,data) => {
       res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});
       res.end(JSON.stringify(data));
@@ -187,16 +191,22 @@ export function createApp(env = process.env, fetcher = fetch) {
       if (req.method === 'GET' && path === '/api/catalog') {
         const products = sources.flatMap(source=>rows(source).products)
           .filter(item=>item.eligible && item.published)
-          .map(({name,plan,brand,price,url,source,referencePrice})=>({name,plan,brand,price,url,source,referencePrice:source==='uniz'?referencePrice:null}));
+          .map(item=>({name:item.name,plan:item.plan,brand:item.brand,price:item.price,url:item.url,
+            source:item.source,id:item.id,buyable:checkout.sellable(item),
+            referencePrice:item.source==='uniz'?item.referencePrice:null}));
         return json(200,{products});
       }
-      if (!path.startsWith('/api/admin/')) return json(404,{message:'Không tìm thấy.'});
+      const publicPost = ['/api/checkout','/api/payments/gpmpay'].includes(path) && req.method === 'POST';
+      if (req.method === 'GET' && path === '/api/order') {
+        return json(...checkout.status(req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1]));
+      }
+      if (!publicPost && !path.startsWith('/api/admin/')) return json(404,{message:'Không tìm thấy.'});
       const auth = req.headers.authorization;
-      if (!key || !auth?.startsWith('Bearer ') || !timingSafeEqual(key,digest(auth.slice(7)))) {
+      if (!publicPost && (!key || !auth?.startsWith('Bearer ') || !timingSafeEqual(key,digest(auth.slice(7))))) {
         return json(401,{message:'Cần mã quản trị hợp lệ.'});
       }
       if (req.method==='GET' && path==='/api/admin/state') {
-        return json(200,{brands,sources:sources.map(source=>({source,configured:configured(source),running:running.has(source),...rows(source)})),
+        return json(200,{brands,checkoutConfigured:checkout.configured,orders:checkout.list(),sources:sources.map(source=>({source,configured:configured(source),running:running.has(source),...rows(source)})),
           events:db.prepare('SELECT * FROM events ORDER BY seq DESC LIMIT 30').all()});
       }
       if (req.method !== 'POST') return json(405,{message:'Phương thức không được hỗ trợ.'});
@@ -205,11 +215,14 @@ export function createApp(env = process.env, fetcher = fetch) {
       let length = 0;
       for await (const chunk of req) {
         length += chunk.length;
-        if (length > 4096) { json(413,{message:'Yêu cầu quá dài.'}); return; }
+        if (length > 8192) { json(413,{message:'Yêu cầu quá dài.'}); return; }
         chunks.push(chunk);
       }
       let input;
-      try { input = JSON.parse(Buffer.concat(chunks)); } catch { return json(400,{message:'JSON không hợp lệ.'}); }
+      const raw = Buffer.concat(chunks);
+      try { input = JSON.parse(raw); } catch { return json(400,{message:'JSON không hợp lệ.'}); }
+      if (path === '/api/checkout') return json(...await checkout.create(input));
+      if (path === '/api/payments/gpmpay') return json(...checkout.webhook(input,raw,req.headers['x-gpmpay-signature']));
       if (!sources.includes(input?.source)) return json(400,{message:'Nguồn hàng không hợp lệ.'});
       const source = input.source;
       if (path === '/api/admin/sync') {
@@ -238,11 +251,11 @@ export function createApp(env = process.env, fetcher = fetch) {
       return json(404,{message:'Không tìm thấy.'});
     } catch { if (!res.headersSent) json(500,{message:'Lỗi máy chủ.'}); else res.end(); }
   });
-  return {server,db,sync};
+  return {server,db,sync,checkout};
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const {server,sync} = createApp();
+  const {server,sync,checkout} = createApp();
   const refresh = () => Promise.all(sources.map(sync)).catch(() => console.error('Lỗi tác vụ đồng bộ.'));
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
@@ -251,8 +264,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   server.listen(port,host,() => {
     console.log('ShopMMO http://' + host + ':' + port);
     void refresh();
+    checkout.resume();
   });
   setInterval(refresh, 5 * 60_000).unref();
+  setInterval(checkout.resume, 30_000).unref();
 }
 
 
